@@ -1,0 +1,11 @@
+gaussian_avatar/gaussian-splatting/
+audio2motion/baselines/PantoMatrix/
+# audio2motion/baselines/
+# audio2motion/baselines/
+
+__pycache__/
+*.pyc
+.DS_Store
+*.pth
+checkpoints/
+logs/
