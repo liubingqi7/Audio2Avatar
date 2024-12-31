@@ -1,11 +1,32 @@
+# Gaussian Avatar related
 gaussian_avatar/gaussian-splatting/
-audio2motion/baselines/PantoMatrix/
-# audio2motion/baselines/
-# audio2motion/baselines/
+gaussian_avatar/data/
 
+# Audio2Motion related
+audio2motion/baselines/
+audio2motion/data/
+
+
+# Python related
 __pycache__/
 *.pyc
-.DS_Store
 *.pth
+
+# System files
+.DS_Store
+
+# Output directories
 checkpoints/
 logs/
+wandb/
+output/
+results/
+
+# IDE related
+.vscode/
+.idea/
+
+# Temporary files
+*.tmp
+*.temp
+*.swp
