@@ -1,10 +1,13 @@
 # Gaussian Avatar related
 gaussian_avatar/gaussian-splatting/
 gaussian_avatar/data/
+gaussian_avatar/baselines/
+*output*
 
 # Audio2Motion related
 audio2motion/baselines/
 audio2motion/data/
+audio2motion/datasets/beat_cache/
 
 
 # Python related
@@ -30,3 +33,7 @@ results/
 *.tmp
 *.temp
 *.swp
+
+# All files in others, for now
+others/
+

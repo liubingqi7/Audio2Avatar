@@ -5,6 +5,9 @@ import smplx
 from .gaussian_model import GaussianModel
 from utils.graphics_utils import compute_face_orientation
 from roma import rotmat_to_unitquat, quat_xyzw_to_wxyz
+from utils.system_utils import mkdir_p
+from plyfile import PlyData, PlyElement
+import os
 
 class SMPLGaussianModel(GaussianModel):
     def __init__(self, sh_degree: int, disable_smpl_static_offset=False, not_finetune_smpl_params=False):
@@ -98,12 +101,15 @@ class SMPLGaussianModel(GaussianModel):
             betas=smpl_param['betas'],
             body_pose=smpl_param['body_pose'][[timestep]],
             global_orient=smpl_param['global_orient'][[timestep]],
-            translation=smpl_param['translation'][[timestep]],
+            transl=smpl_param['translation'][[timestep]],
             return_verts=True
         ).vertices
 
         # Add offsets
         verts = verts + smpl_param['static_offset'] + smpl_param['dynamic_offset'][[timestep]]
+
+        # verts[..., 1] = -verts[..., 1]
+
         self.update_mesh_properties(verts)
 
     def update_mesh_properties(self, verts):
@@ -137,6 +143,7 @@ class SMPLGaussianModel(GaussianModel):
         super().training_setup(training_args)
 
         if self.not_finetune_smpl_params:
+            print("not finetuning smpl params")
             return
 
         # Setup pose parameters
@@ -162,6 +169,31 @@ class SMPLGaussianModel(GaussianModel):
         npz_path = Path(path).parent / "smpl_param.npz"
         smpl_param = {k: v.cpu().numpy() for k, v in self.smpl_param.items()}
         np.savez(str(npz_path), **smpl_param)
+
+    def save_absolute_ply(self, path):
+        """Save absolute ply file"""
+        mkdir_p(os.path.dirname(path))
+
+        xyz = self.get_xyz.detach().cpu().numpy()
+        normals = np.zeros_like(xyz)
+        f_dc = self._features_dc.detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
+        f_rest = self._features_rest.detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
+        opacities = self._opacity.detach().cpu().numpy()
+        scale = self.get_scaling.detach().cpu().numpy()
+        rotation = self.get_rotation.detach().cpu().numpy()
+
+        dtype_full = [(attribute, 'f4') for attribute in self.construct_list_of_attributes()]
+
+        elements = np.empty(xyz.shape[0], dtype=dtype_full)
+        attributes = np.concatenate((xyz, normals, f_dc, f_rest, opacities, scale, rotation), axis=1)
+
+        if self.binding is not None:
+            binding = self.binding.detach().cpu().numpy()
+            attributes = np.concatenate((attributes, binding[:, None]), axis=1)
+            
+        elements[:] = list(map(tuple, attributes))
+        el = PlyElement.describe(elements, 'vertex')
+        PlyData([el]).write(path)
 
     def load_ply(self, path, **kwargs):
         """Load model and SMPL parameters"""

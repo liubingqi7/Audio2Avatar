@@ -67,7 +67,7 @@ class DataParams(ParamGroup):
         self.eval = False
         self.bind_to_mesh = False
         self.disable_smpl_static_offset = False
-        self.not_finetune_smpl_params = False
+        self.not_finetune_smpl_params = True
         self.select_camera_id = -1
         
         super().__init__(parser, "Dataset Parameters", sentinel)
@@ -105,7 +105,6 @@ class OptimizationParams(ParamGroup):
         self.densify_grad_threshold = 0.0002
         
         # GaussianAvatars
-        self.smpl_expr_lr = 1e-3
         self.smpl_trans_lr = 1e-6
         self.smpl_pose_lr = 1e-5
         self.percent_dense = 0.01

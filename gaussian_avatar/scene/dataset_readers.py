@@ -481,13 +481,15 @@ def readMonoDatasetInfo(path, white_background, eval=False):
     train_mesh_infos = readSMPLMeshes(path, 'train')
     
     print("Reading Test Meshes")
-    test_mesh_infos = readSMPLMeshes(path, 'test')
+    # test_mesh_infos = readSMPLMeshes(path, 'test')
+    test_mesh_infos = {}
 
     print("Reading Training Cameras")
     train_cam_infos = readCameraFromMonoDataset(path, 'train')
 
     print("Reading Test Cameras")
-    test_cam_infos = readCameraFromMonoDataset(path, 'test')
+    # test_cam_infos = readCameraFromMonoDataset(path, 'test')
+    test_cam_infos = []
     
     # If not in eval mode, merge test into train
     if not eval:

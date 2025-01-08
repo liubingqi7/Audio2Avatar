@@ -20,6 +20,10 @@ from datasets.dataset_mono import MonoDataset_train
 import wandb
 import smplx
 import trimesh
+from PIL import Image
+from pathlib import Path
+import numpy as np
+import pickle
 
 def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from):
     # if not SPARSE_ADAM_AVAILABLE and opt.optimizer_type == "sparse_adam":
@@ -68,8 +72,9 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                     
                     # mesh rendering
                     if gaussians.binding != None and msg['show_mesh']:
+                        print("render mesh")
                         out_dict = mesh_renderer.render_from_camera(gaussians.verts, gaussians.faces, custom_cam)
-
+                        print(f"out_dict: {out_dict}")
                         rgba_mesh = out_dict['rgba'].squeeze(0).permute(2, 0, 1)  # (C, W, H)
                         rgb_mesh = rgba_mesh[:3, :, :]
                         alpha_mesh = rgba_mesh[3:, :, :]
@@ -79,7 +84,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                             net_image = rgb_mesh
                         else:
                             net_image = rgb_mesh * alpha_mesh * mesh_opacity  + net_image * (alpha_mesh * (1 - mesh_opacity) + (1 - alpha_mesh))
-
+                    
                     # send data
                     net_dict = {'num_timesteps': gaussians.num_timesteps, 'num_points': gaussians._xyz.shape[0]}
                     network_gui.send(net_image, net_dict)
@@ -105,6 +110,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
         if gaussians.binding != None:
             gaussians.select_mesh_by_timestep(viewpoint_cam.timestep)
+            # gaussians.save_absolute_ply(f"output_gaussians/gaussian.ply")
 
         # Render
         if (iteration - 1) == debug_from:
@@ -115,6 +121,55 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         # Loss
         gt_image = viewpoint_cam.original_image.cuda()
 
+        # 每1000个iter保存图像
+        if (iteration % 2 == 1 and iteration < 20) or iteration % 500 == 0:
+            # 创建输出目录
+            output_dir = Path("output_2")
+            output_dir.mkdir(exist_ok=True)
+            
+            # 保存渲染图像
+            rendered_img = (image.detach().cpu().numpy() * 255).astype(np.uint8)
+            rendered_img = rendered_img.transpose(1, 2, 0)
+            rendered_img = Image.fromarray(rendered_img)
+            rendered_img.save(output_dir / f"rendered_{iteration:06d}.png")
+            
+            # 保存原始图像
+            gt_img = (gt_image.detach().cpu().numpy() * 255).astype(np.uint8)
+            gt_img = gt_img.transpose(1, 2, 0)
+            gt_img = Image.fromarray(gt_img)
+            gt_img.save(output_dir / f"gt_{iteration:06d}.png")
+
+            # # 保存当前的smpl参数
+            # timestep = viewpoint_cam.timestep
+            # smpl_params = {
+            #     'betas': gaussians.smpl_param['betas'].detach().cpu().numpy(),
+            #     'body_pose': gaussians.smpl_param['body_pose'][timestep].detach().cpu().numpy(),
+            #     'global_orient': gaussians.smpl_param['global_orient'][timestep].detach().cpu().numpy(),
+            #     'translation': gaussians.smpl_param['translation'][timestep].detach().cpu().numpy()
+            # }
+            # smpl_params['timestep'] = timestep
+            # with open(output_dir / f"smpl_params_{iteration:06d}.pkl", "wb") as f:
+            #     pickle.dump(smpl_params, f)
+
+            # # 渲染当前时间步的SMPL mesh
+            # if gaussians.binding is not None:
+            #     # 创建输出目录
+            #     mesh_dir = Path("output_1")
+            #     mesh_dir.mkdir(exist_ok=True, parents=True)
+                
+            #     # 获取当前时间步的顶点和面片
+            #     verts = gaussians.verts.detach().cpu().numpy().squeeze(0)  # (V, 3)
+            #     faces = gaussians.faces.detach().cpu().numpy()  # (F, 3)
+                
+            #     # 创建trimesh对象并渲染成图像
+            #     mesh = trimesh.Trimesh(vertices=verts, faces=faces)
+            #     scene = mesh.scene()
+            #     png = scene.save_image(resolution=(800,800))
+                
+            #     # 将渲染结果保存为图像
+            #     img = Image.open(trimesh.util.wrap_as_stream(png))
+            #     img.save(mesh_dir / f"mesh_{iteration:06d}.png")
+                
         losses = {}
         losses['l1'] = l1_loss(image, gt_image) * (1.0 - opt.lambda_dssim)
         losses['ssim'] = (1.0 - ssim(image, gt_image)) * opt.lambda_dssim
@@ -148,6 +203,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             if opt.lambda_laplacian != 0:
                 losses['lap'] = gaussians.compute_laplacian_loss() * opt.lambda_laplacian
         
+
         losses['total'] = sum([v for k, v in losses.items()])
         losses['total'].backward()
 
@@ -194,6 +250,10 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
             # Optimizer step
             if iteration < opt.iterations:
+                torch.nn.utils.clip_grad_norm_(
+                    [p for group in gaussians.optimizer.param_groups for p in group['params']], 
+                    max_norm=1.0
+                )
                 gaussians.optimizer.step()
                 gaussians.optimizer.zero_grad(set_to_none = True)
 
