@@ -13,6 +13,7 @@ import torch
 import math
 import numpy as np
 from typing import NamedTuple
+from pytorch3d.transforms import quaternion_to_matrix, matrix_to_quaternion
 
 class BasicPointCloud(NamedTuple):
     points : np.array
@@ -47,6 +48,26 @@ def getWorld2View2(R, t, translate=np.array([.0, .0, .0]), scale=1.0):
     C2W[:3, 3] = cam_center
     Rt = np.linalg.inv(C2W)
     return np.float32(Rt)
+
+def getWorld2View_torch(R, t):
+    Rt = torch.zeros(4, 4, device=R.device)
+    Rt[:3, :3] = R.transpose(0, 1)
+    Rt[:3, 3] = t
+    Rt[3, 3] = 1.0
+    return Rt
+
+def getWorld2View2_torch(R, t, translate=torch.tensor([.0, .0, .0]), scale=1.0):
+    Rt = torch.zeros(4, 4, device=R.device)
+    Rt[:3, :3] = R.transpose(0, 1) 
+    Rt[:3, 3] = t
+    Rt[3, 3] = 1.0
+
+    C2W = torch.inverse(Rt)
+    cam_center = C2W[:3, 3]
+    cam_center = (cam_center + translate.to(R.device)) * scale
+    C2W[:3, 3] = cam_center
+    Rt = torch.inverse(C2W)
+    return Rt
 
 # def getProjectionMatrix(znear, zfar, fovX, fovY, K, h, w):
 #     tanHalfFovY = math.tan((fovY / 2))
@@ -103,11 +124,37 @@ def getProjectionMatrix(znear, zfar, fovX, fovY):
     P[2, 3] = -(zfar * znear) / (zfar - znear)
     return P
 
+def getProjectionMatrix_torch(znear, zfar, fovX, fovY):
+    tanHalfFovY = math.tan((fovY / 2))
+    tanHalfFovX = math.tan((fovX / 2))
+
+    top = tanHalfFovY * znear
+    bottom = -top
+    right = tanHalfFovX * znear
+    left = -right
+
+    P = torch.zeros(4, 4).to(fovX.device)
+
+    z_sign = 1.0
+
+    P[0, 0] = 2.0 * znear / (right - left)
+    P[1, 1] = 2.0 * znear / (top - bottom)
+    P[0, 2] = (right + left) / (right - left)
+    P[1, 2] = (top + bottom) / (top - bottom)
+    P[3, 2] = z_sign
+    P[2, 2] = z_sign * zfar / (zfar - znear)
+    P[2, 3] = -(zfar * znear) / (zfar - znear)
+    return P
+
 def fov2focal(fov, pixels):
     return pixels / (2 * math.tan(fov / 2))
 
 def focal2fov(focal, pixels):
     return 2*math.atan(pixels/(2*focal))
+
+def focal2fov_torch(focal, pixels):
+    return 2*torch.atan(pixels/(2*focal))
+
 
 
 # Copyright (c) 2020-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved. 
@@ -187,3 +234,39 @@ def compute_vertex_normals(verts, faces):
     if torch.is_anomaly_enabled():
         assert torch.all(torch.isfinite(v_normals))
     return v_normals
+
+def project_gaussians(gaussians, intrinsic, extrinsic):
+    '''
+    Project gaussians to image plane
+    xyz: [B, N, 3]
+    intrinsic: [3, 3]
+    extrinsic: [4, 4]
+    return: [B, N, 2]
+    '''
+
+    xyz = gaussians['xyz']
+    rot = gaussians['rot']
+    rot_mat = quaternion_to_matrix(rot)
+    
+    # Convert gaussian points from world coordinates to camera coordinates
+    homogen_coord = torch.ones([xyz.shape[0], xyz.shape[1], 1], device=xyz.device)
+    homogeneous_xyz = torch.cat([xyz, homogen_coord], dim=-1)  # [B, N, 4]
+    
+    # Apply extrinsic matrix
+
+    cam_xyz = torch.matmul(extrinsic, homogeneous_xyz.transpose(-1, -2))  # [B, 4, N]
+    cam_xyz = cam_xyz.transpose(-1, -2)[..., :3]  # [B, N, 3]
+
+    cam_rot_mat = torch.matmul(extrinsic[:, :3, :3], rot_mat) # [N, 3, 3]
+    cam_rot = matrix_to_quaternion(cam_rot_mat) # [N, 4]
+    gaussians['rot'] = cam_rot
+    
+    # Apply intrinsic matrix
+    projected_xy = torch.matmul(intrinsic, cam_xyz.transpose(-1, -2))  # [B, 3, N]
+    projected_xy = projected_xy.transpose(-1, -2)
+    projected_gaussians = projected_xy[..., :2] / projected_xy[..., 2:3]
+
+    gaussians['xyz'] = projected_gaussians
+    return gaussians
+
+# def unproject_gaussians(gaussians, intrinsic, extrinsic):

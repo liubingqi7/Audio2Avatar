@@ -32,10 +32,28 @@ class ParamGroup:
             if arg[0] in vars(self) or ("_" + arg[0]) in vars(self):
                 setattr(group, arg[0], arg[1])
         return group
+    
+# class DataParams(ParamGroup):
+#     def __init__(self, parser, sentinel=False):
+#         self.data_folder = "gaussian_avatar/data/gs_data/data/m4c_processed"
+        
+#         self.cam_static = True 
+#         self.no_mask = False 
+
+#         self.clip_length = 10
+#         self.clip_overlap = 5
+
+#         # Data augmentation parameters
+#         self.augment = False  # Whether to use data augmentation
+#         self.color_jitter = False  # Whether to use color jittering
+#         self.random_flip = False  # Whether to use random flipping
+        
+#         super().__init__(parser, "Dataset Parameters")
+
 
 class DataParams(ParamGroup):
     def __init__(self, parser, sentinel=False):
-        self.source_path = ""  # Dataset root directory
+        self.source_path = "data/gs_data/data/m4c_processed"  # Dataset root directory
         self.smpl_type = "smpl-x"  # SMPL parameter directory
         self.smpl_gender = "neutral"  # SMPL model gender
         self.no_mask = False  # Whether to disable mask
@@ -70,6 +88,11 @@ class DataParams(ParamGroup):
         self.not_finetune_smpl_params = True
         self.select_camera_id = -1
         
+        # Video parameters
+        self.clip_length = 10
+        self.clip_overlap = 5
+        self.data_folder = ""
+
         super().__init__(parser, "Dataset Parameters", sentinel)
 
     def extract(self, args):

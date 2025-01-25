@@ -9,6 +9,8 @@ audio2motion/baselines/
 audio2motion/data/
 audio2motion/datasets/beat_cache/
 
+# output images
+gaussian_avatar/test_images/
 
 # Python related
 __pycache__/
@@ -23,6 +25,7 @@ checkpoints/
 logs/
 wandb/
 output/
+output_2/
 results/
 
 # IDE related
