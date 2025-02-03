@@ -37,7 +37,8 @@ class VideoDataset(Dataset):
             smpl_params = torch.load(smpl_param_path)
 
             # turn into tensor
-            camera_params = {k: torch.from_numpy(v) for k, v in camera_params.items()}
+            camera_params = {k: torch.from_numpy(np.array(v)) for k, v in camera_params.items()}
+            # camera_params = {k: torch.from_numpy(v) for k, v in camera_params.items()}
             camera_params['extrinsic'] = camera_params['extrinsic'].to(torch.float32)
             camera_params['intrinsic'] = camera_params['intrinsic'].to(torch.float32)
 

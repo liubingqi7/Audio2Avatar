@@ -144,15 +144,15 @@ class DGCNN(nn.Module):
         x = torch.cat((x1, x2, x3, x4), dim=1)
 
         x = self.conv5(x)
-        x1 = F.adaptive_max_pool1d(x, 1).view(batch_size, -1)
-        x2 = F.adaptive_avg_pool1d(x, 1).view(batch_size, -1)
-        x = torch.cat((x1, x2), 1)
+        # x1 = F.adaptive_max_pool1d(x, 1).view(batch_size, -1)
+        # x2 = F.adaptive_avg_pool1d(x, 1).view(batch_size, -1)
+        # x = torch.cat((x1, x2), 1)
 
-        x = F.leaky_relu(self.bn6(self.linear1(x)), negative_slope=0.2)
-        x = self.dp1(x)
-        x = F.leaky_relu(self.bn7(self.linear2(x)), negative_slope=0.2)
-        x = self.dp2(x)
-        x = self.linear3(x)
+        # x = F.leaky_relu(self.bn6(self.linear1(x)), negative_slope=0.2)
+        # x = self.dp1(x)
+        # x = F.leaky_relu(self.bn7(self.linear2(x)), negative_slope=0.2)
+        # x = self.dp2(x)
+        # x = self.linear3(x)
         return x
     
 class DGCNN_Gaussian(nn.Module):

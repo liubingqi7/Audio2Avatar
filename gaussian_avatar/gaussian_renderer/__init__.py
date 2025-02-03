@@ -82,7 +82,7 @@ def render_avatars(gaussians, cam_params, args, bg_color=None, debug=False):
         sh_degree=3,
         campos=camera_center.cuda(),
         prefiltered=False,
-        debug=False
+        debug=False,
     )
 
     N = gaussians['xyz'].shape[0]

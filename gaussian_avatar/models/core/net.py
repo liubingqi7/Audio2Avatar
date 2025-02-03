@@ -185,10 +185,11 @@ class AnimationNet(nn.Module):
 
     def forward(self, gaussians, poses, cam_params):
         body_pose = poses['body_pose']
+        print(f"body_pose.shape: {body_pose.shape}")
         global_trans = poses['trans']
-        poses = torch.cat([body_pose, global_trans], dim=-1).squeeze(0)
+        poses = torch.cat([global_trans, body_pose], dim=-1).squeeze(0)
         # Deform gaussians
-        lbs_offset, deformed_gaussians = self.deformer(gaussians, poses, self.lbs_weights)
+        deformed_gaussians, lbs_offset = self.deformer(gaussians, poses, self.lbs_weights)
 
         # Transform gaussians using LBS
         transformed_gaussians = self.lbs_transform(deformed_gaussians, poses, lbs_offset)
@@ -205,11 +206,12 @@ class AnimationNet(nn.Module):
         return rendered_image
     
     def lbs_transform(self, gaussians, poses, lbs_offset):
-        body_pose = poses[:, :3]
-        global_trans = poses[:, 3:]
-        _, B, T = body_pose.shape
+        print(f"poses.shape: {poses.shape}")
+        global_trans = poses[:, :3]
+        body_pose = poses[:, 3:]
+        B, _ = body_pose.shape
         ident = torch.eye(3, device=self.args.device)
-        rot_mats = batch_rodrigues(body_pose.view(-1, 3)).view(
+        rot_mats = batch_rodrigues(body_pose.reshape(-1, 3)).view(
             [B, -1, 3, 3])
         
         # pose_feature = (rot_mats[:, 1:, :, :] - ident).view([B, -1])
@@ -220,14 +222,17 @@ class AnimationNet(nn.Module):
         # print(f" global_trans.shape: { global_trans.shape}")
 
         J_transformed, A = batch_rigid_transform(rot_mats, self.joints.repeat(B, 1, 1), self.parents)
-        W = self.lbs_weights.unsqueeze(dim=0).expand([B, -1, -1]) + lbs_offset.unsqueeze(0).expand([B, -1, -1])
+
+        print(f"lbs_offset.shape: {lbs_offset}")
+        W = self.lbs_weights.unsqueeze(dim=0).expand([B, -1, -1]) + lbs_offset
         num_joints = self.joints.shape[1]
         T = torch.matmul(W, A.view(B, num_joints, 16)) \
             .view(B, -1, 4, 4)
         
         # Add pose offsets to gaussian
         # v_posed = pose_offsets + v_shaped
-        gaussians_posed = gaussians['xyz'].unsqueeze(0).repeat(B, 1, 1) # + pose_offsets # [N, 3] --> [B, N, 3]
+        print(f"gaussians['xyz'].shape: {gaussians['xyz'].shape}")
+        gaussians_posed = gaussians['xyz']
 
         # Transform gaussian positions and rotations
         homogen_coord = torch.ones([B, gaussians_posed.shape[1], 1], device=self.args.device)
@@ -255,9 +260,9 @@ class AnimationNet(nn.Module):
             transformed_gaussians.append({
                 'xyz': transformed_xyz[i],
                 'rot': new_quat[i],
-                'color': gaussians['color'],
-                'scale': gaussians['scale'],
-                'opacity': gaussians['opacity']
+                'color': gaussians['color'][i],
+                'scale': gaussians['scale'][i],
+                'opacity': gaussians['opacity'][i]
             })
         # transformed_gaussians = {
         #     'xyz': transformed_xyz,  # [B, N, 3]

@@ -2,6 +2,7 @@
 gaussian_avatar/gaussian-splatting/
 gaussian_avatar/data/
 gaussian_avatar/baselines/
+gaussian_avatar/smpl/
 *output*
 
 # Audio2Motion related

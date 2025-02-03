@@ -6,7 +6,7 @@ from typing import Callable
 import collections
 from torch import Tensor
 from itertools import repeat
-from torch_geometric.nn import GCNConv
+# from torch_geometric.nn import GCNConv
 from models.utils.transform_utils import remove_outliers, MinMaxScaler
 from models.core.pointtransformer_v3 import PointTransformerV3
 from models.core.DGCNN import DGCNN
@@ -663,7 +663,7 @@ class GaussianDeformer(nn.Module):
         
         # Offset and weight correction predictor
         self.offset_predictor = nn.Sequential(
-            nn.Linear(hidden_dim * 3, hidden_dim),  # 3 hidden_dims from graph, pose and lbs features
+            nn.Linear(hidden_dim, hidden_dim),  # 3 hidden_dims from graph, pose and lbs features
             nn.LayerNorm(hidden_dim),
             nn.LeakyReLU(0.2),
             nn.Linear(hidden_dim, hidden_dim),
@@ -704,6 +704,8 @@ class GaussianDeformer(nn.Module):
         # 1. Extract local features through dynamic graph
         graph_feats = self.graph_encoder(feats.permute(0, 2, 1)) # [N, hidden_dim]
 
+        print(graph_feats.shape)
+
         offset_pred = self.offset_predictor(graph_feats.reshape(B*N, -1))
         offset_pred = offset_pred.reshape(B, N, -1)
 
@@ -738,7 +740,11 @@ class GaussianDeformer(nn.Module):
 
         # Stack lbs offsets to get [B, N, 24] tensor
         all_lbs_offsets = torch.stack(all_lbs_offsets)
+
+        combined_deformed_gs = {}
+        for key in deformed_gaussians[0].keys():
+            combined_deformed_gs[key] = torch.stack([d[key] for d in deformed_gaussians], dim=0)
         
-        return deformed_gaussians, all_lbs_offsets
+        return combined_deformed_gs, all_lbs_offsets
 
 
