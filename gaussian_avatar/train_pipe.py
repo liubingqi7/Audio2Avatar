@@ -6,6 +6,7 @@ from datasets.utils import collate_fn
 import matplotlib.pyplot as plt
 import torch.nn as nn
 from tqdm import tqdm
+from models.utils.loss_utils import l1_loss, ssim
 
 def main():
     parser = ArgumentParser()
@@ -13,7 +14,7 @@ def main():
     
     parser.add_argument('--data_folder', type=str, default="data/gs_data/data/m4c_processed", 
                         help='Path to the folder containing video data.')
-    parser.add_argument('--clip_length', type=int, default=2, 
+    parser.add_argument('--clip_length', type=int, default=1, 
                         help='Length of each video clip.')
     parser.add_argument('--clip_overlap', type=int, default=0, 
                         help='Overlap between video clips. If None, defaults to half of clip_length.')
@@ -48,9 +49,6 @@ def main():
     optimizer = torch.optim.Adam(list(net.parameters()) + list(animation_net.parameters()), 
                                lr=args.learning_rate)
     
-    # Define loss function
-    criterion = nn.L1Loss()
-
     # Training loop
     for epoch in range(args.num_epochs):
         total_loss = 0
@@ -73,11 +71,15 @@ def main():
             rendered_images = animation_net.forward(gaussian, data.smpl_parms, data.cam_parms).permute(0, 2, 3, 1)
 
             # Calculate loss
-            loss = criterion(rendered_images, target_images.squeeze(0))
-            
+            losses = {}
+            losses['l1'] = l1_loss(rendered_images, target_images.squeeze(0)) * 0.8
+            losses['ssim'] = (1.0 - ssim(rendered_images, target_images.squeeze(0))) * 0.2
+
+            losses['total'] = sum([v for k, v in losses.items()])
+
             # Backward pass and optimization
             optimizer.zero_grad()
-            loss.backward()
+            losses['total'].backward()
             optimizer.step()
             
             total_loss += loss.item()

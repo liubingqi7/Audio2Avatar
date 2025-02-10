@@ -550,7 +550,7 @@ class GaussianUpdater_2(nn.Module):
     def __init__(self, args, input_dim=291+3+3+4+1*3+1, hidden_dim=128, output_color_dim=3, feat_dim=14):
         super(GaussianUpdater_2, self).__init__()
         self.args = args
-        self.feat_encoder = PointTransformerV3(input_dim, enable_flash=False, dec_patch_size=[128, 128, 128, 128], enc_patch_size=[128, 128, 128, 128, 128])
+        self.feat_encoder = PointTransformerV3(input_dim, enable_flash=False, dec_patch_size=[128*2, 128*2, 128*2, 128*2], enc_patch_size=[128*2, 128*2, 128*2, 128*2, 128*2])
         self.delta_predictor = MultiHeadMLP(input_dim+64, hidden_dim, output_color_dim)
         self.grid_resolution = 100
 
@@ -681,7 +681,7 @@ class GaussianDeformer(nn.Module):
         #   deformed_gaussians: list of B gaussian dicts, each with same keys as input
         #   all_lbs_offsets: [B, N, 24] lbs weight corrections for each pose
 
-        print(f"pose.shape: {pose.shape}")
+        # print(f"pose.shape: {pose.shape}")
 
         B = pose.shape[0]
         N = gaussians['xyz'].shape[0]
@@ -698,18 +698,15 @@ class GaussianDeformer(nn.Module):
         lbs_weights = lbs_weights.unsqueeze(0).expand(pose.shape[0], -1, -1)
         pose = pose.unsqueeze(1).expand(-1, gaussian_feats.shape[1], -1)
 
-        print(gaussian_feats.shape, lbs_weights.shape, pose.shape)
+        # print(gaussian_feats.shape, lbs_weights.shape, pose.shape)
         
         feats = torch.cat([gaussian_feats, lbs_weights, pose], dim=-1)
         # 1. Extract local features through dynamic graph
         graph_feats = self.graph_encoder(feats.permute(0, 2, 1)) # [N, hidden_dim]
 
-        print(graph_feats.shape)
-
         offset_pred = self.offset_predictor(graph_feats.reshape(B*N, -1))
         offset_pred = offset_pred.reshape(B, N, -1)
 
-        print(offset_pred.shape)
         # Process each pose to get multiple deformed gaussians
         deformed_gaussians = []
         all_lbs_offsets = []
@@ -729,11 +726,11 @@ class GaussianDeformer(nn.Module):
 
             # 5. Update gaussian parameters for this pose
             deformed_gs = {}
-            deformed_gs['xyz'] = gaussians['xyz'] + gaussians_offset[:, :3]
-            deformed_gs['scale'] = gaussians['scale'] + gaussians_offset[:, 3:6]
-            deformed_gs['rot'] = gaussians['rot'] + gaussians_offset[:, 6:10]
-            deformed_gs['opacity'] = gaussians['opacity'] + gaussians_offset[:, 10:11]
-            deformed_gs['color'] = gaussians['color'] + gaussians_offset[:, 11:]
+            deformed_gs['xyz'] = gaussians['xyz'] # + gaussians_offset[:, :3]
+            deformed_gs['scale'] = gaussians['scale'] # + gaussians_offset[:, 3:6]
+            deformed_gs['rot'] = gaussians['rot'] # + gaussians_offset[:, 6:10]
+            deformed_gs['opacity'] = gaussians['opacity'] # + gaussians_offset[:, 10:11]
+            deformed_gs['color'] = gaussians['color'] # + gaussians_offset[:, 11:]
             
             deformed_gaussians.append(deformed_gs)
             all_lbs_offsets.append(lbs_offset)
