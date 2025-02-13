@@ -11,6 +11,7 @@ from gaussian_renderer import render_avatars
 from utils.general_utils import inverse_sigmoid
 from utils.sh_utils import RGB2SH
 import numpy as np
+from models.utils.subdivide_smpl import subdivide_smpl_model
 
 class GaussianNet(nn.Module):
     def __init__(self, args):
@@ -29,6 +30,10 @@ class GaussianNet(nn.Module):
             # gender=self.args.gender,
             batch_size=1,
         ).to(self.args.device)
+
+        # subdivide smpl model
+        self.smpl_model = subdivide_smpl_model(self.smpl_model, n_iter=1, SMPL_PATH=self.args.smplx_model_path)
+
         self.lbs_weights = self.smpl_model.lbs_weights # [N, 24]
         self.parents = self.smpl_model.parents # [24]
         self.posedirs = self.smpl_model.posedirs # [24, 3]
@@ -37,11 +42,6 @@ class GaussianNet(nn.Module):
         self.joints = torch.einsum('bik,ji->bjk', [self.v_template.unsqueeze(0), self.J_regressor]) # [1, 24, 3]
         self.edges = torch.tensor(get_edges_from_faces(self.smpl_model.faces)).to(self.args.device) # [2, 20664]
         
-
-        # # 打印显存占用
-        # print(f"当前显存占用: {torch.cuda.memory_allocated() / 1024**2:.2f} MB")
-        # print(f"显存峰值: {torch.cuda.max_memory_allocated() / 1024**2:.2f} MB")
-        # gaussian init
         self.gaussians = None
         self.num_gaussians = 0  
         
@@ -67,17 +67,13 @@ class GaussianNet(nn.Module):
 
     def init_gaussians(self, smpl_params):
         # Init gaussians on SMPL vertices
-
-        # get smpl vertices
-        init_smpl = self.smpl_model(
-            betas=smpl_params['beta'].squeeze(0),
-            return_verts=True
-        )
-        verts = init_smpl.vertices
+        verts = self.smpl_model.v_template
         # self.joints = init_smpl.joints
 
+        # print(f"verts.shape: {verts.shape}")
+
         # Init color from rgb
-        self.num_gaussians = verts.shape[1]
+        self.num_gaussians = verts.shape[0]
 
         if not self.args.rgb:
             fused_color = torch.tensor(np.random.random((self.num_gaussians, 3)) / 255.0).float().to(self.args.device)
@@ -89,7 +85,7 @@ class GaussianNet(nn.Module):
 
         # Init gaussians on SMPL vertices
         self.gaussians = {
-            'xyz': verts.clone().squeeze(0), # [N, 3]
+            'xyz': verts.clone(), # [N, 3]
             'rot': torch.zeros(self.num_gaussians, 4).to(self.args.device), # [N, 4]
             'color': features.reshape(self.num_gaussians, -1), # [N, feat_dim*3]
             'scale': torch.log(torch.ones((self.num_gaussians, 3), device="cuda")), # [N, 3]
@@ -176,11 +172,23 @@ class AnimationNet(nn.Module):
             # gender=self.args.gender,
             batch_size=1,
         ).to(self.args.device)
+
+        # subdivide smpl model
+        self.smpl_model = subdivide_smpl_model(self.smpl_model, n_iter=1, SMPL_PATH=self.args.smplx_model_path)
+
         self.lbs_weights = self.smpl_model.lbs_weights # [N, 24]
         self.parents = self.smpl_model.parents # [24]
+        self.posedirs = self.smpl_model.posedirs # [24, 3]
         self.J_regressor = self.smpl_model.J_regressor # [24, 6890]
         self.v_template = self.smpl_model.v_template # [6890, 3]
         self.joints = torch.einsum('bik,ji->bjk', [self.v_template.unsqueeze(0), self.J_regressor]) # [1, 24, 3]
+        self.edges = torch.tensor(get_edges_from_faces(self.smpl_model.faces)).to(self.args.device) # [2, 20664]
+        
+        # self.lbs_weights = self.smpl_model.lbs_weights # [N, 24]
+        # self.parents = self.smpl_model.parents # [24]
+        # self.J_regressor = self.smpl_model.J_regressor # [24, 6890]
+        # self.v_template = self.smpl_model.v_template # [6890, 3]
+        # self.joints = torch.einsum('bik,ji->bjk', [self.v_template.unsqueeze(0), self.J_regressor]) # [1, 24, 3]
         self.deformer = GaussianDeformer(self.args)
         self.deforme_none = simple_stack
 

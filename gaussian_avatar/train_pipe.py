@@ -1,4 +1,5 @@
 import torch
+import os
 from models.core.net import GaussianNet, AnimationNet
 from datasets.dataset_video import VideoDataset
 from argparse import ArgumentParser
@@ -33,6 +34,15 @@ def main():
     parser.add_argument('--learning_rate', type=float, default=1e-4,
                         help='Learning rate')
     parser.add_argument('--rgb', action='store_true', help='Whether to use RGB color')
+    parser.add_argument('--use_ckpt', action='store_true', help='Whether to use checkpoint file')
+    parser.add_argument('--ckpt_path', type=str, default=None,
+                        help='Path to the checkpoint file.')
+    parser.add_argument('--net_ckpt_path', type=str, default=None,
+                        help='Path to the Gaussian net checkpoint file.')
+    parser.add_argument('--animation_net_ckpt_path', type=str, default=None,
+                        help='Path to the animation net checkpoint file.')  
+    parser.add_argument('--output_dir', type=str, default='results',
+                    help='Output directory for saving rendered images')
     
     args = parser.parse_args()
 
@@ -45,12 +55,27 @@ def main():
     net = GaussianNet(args).to(args.device)
     animation_net = AnimationNet(args).to(args.device)
 
+    # Create output directory
+    os.makedirs(args.output_dir, exist_ok=True)
+    os.makedirs(args.ckpt_path, exist_ok=True)
+
+    # load model
+    if args.use_ckpt:
+        net_ckpt_path = os.path.join(args.ckpt_path, args.net_ckpt_path)    
+        animation_net_ckpt_path = os.path.join(args.ckpt_path, args.animation_net_ckpt_path)
+        net.load_state_dict(torch.load(net_ckpt_path))
+        animation_net.load_state_dict(torch.load(animation_net_ckpt_path))
+        current_epoch = int(args.net_ckpt_path.split('_')[-1].split('.')[0])
+        print(f"Loaded model from epoch {current_epoch}")
+    else:
+        current_epoch = 0
+
     # Define optimizer
     optimizer = torch.optim.Adam(list(net.parameters()) + list(animation_net.parameters()), 
                                lr=args.learning_rate)
     
     # Training loop
-    for epoch in range(args.num_epochs):
+    for epoch in range(current_epoch, args.num_epochs):
         total_loss = 0
         
         # Create progress bar for each epoch
@@ -82,24 +107,28 @@ def main():
             losses['total'].backward()
             optimizer.step()
             
-            total_loss += loss.item()
+            total_loss += losses['total'].item()
 
             # save rendered image at the end of epoch
             if i == 0:
-                save_path = f"results/epoch_{epoch+1}_frame_{i}.png"
+                save_path = f"{args.output_dir}/epoch_{epoch+1}_frame_{i}.png"
                 # print(f"max: {rendered_images[0].max()}, min: {rendered_images[0].min()}")
                 plt.imsave(save_path, rendered_images[0].detach().cpu().numpy())
-                gt_save_path = f"results/epoch_{epoch+1}_frame_{i}_gt.png"
+                gt_save_path = f"{args.output_dir}/epoch_{epoch+1}_frame_{i}_gt.png"
                 plt.imsave(gt_save_path, target_images.squeeze(0)[0].detach().cpu().numpy())
             
             # Update progress bar
-            pbar.set_postfix({'loss': loss.item()})
-
-        
+            pbar.set_postfix({'l1': losses['l1'].item(),'ssim': losses['ssim'].item()})
         
         # Print average loss for the epoch
         avg_loss = total_loss / len(dataloader)
         print(f"Epoch [{epoch+1}/{args.num_epochs}], Average Loss: {avg_loss:.4f}")
+
+        # save model
+        if epoch % 50 == 0:
+            # print(f"Saving model at epoch {epoch}, {args.ckpt_path}/gaussian_net_{epoch+1}.pth")
+            torch.save(net.state_dict(), f"{args.ckpt_path}/gaussian_net_{epoch+1}.pth")
+            torch.save(animation_net.state_dict(), f"{args.ckpt_path}/animation_net_{epoch+1}.pth")
 
 if __name__ == "__main__":
     main()

@@ -591,7 +591,7 @@ class GaussianUpdater_2(nn.Module):
         # 3. update gaussian parameters and unnormalize
         for gs in normalized_gs:
             for k, v in gs.items():
-                # print(f"k: {k}, v.range: {v.min().item()}, {v.max().item()}")
+                # print(f"k: {k}, v.range: {delta_params[k].min().item()}, {delta_params[k].max().item()}")
                 if k == 'color':
                     gs[k] = delta_params[k]
                 else:
@@ -610,6 +610,7 @@ class GaussianUpdater_2(nn.Module):
             scaler.fit_transform(gs['xyz'])
             normalized_gs['xyz'] = scaler.transform(gs['xyz']) 
             normalized_gs['scale'] = gs['scale'] + torch.log(scaler.scale_)
+            # print(f"scaler.scale_: {scaler.scale_}")
             normalized_gs['color'] = gs['color']
             normalized_gs['opacity'] = gs['opacity']
             normalized_gs['rot'] = gs['rot']
