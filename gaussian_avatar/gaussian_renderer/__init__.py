@@ -18,7 +18,7 @@ from utils.sh_utils import eval_sh
 from utils.graphics_utils import getWorld2View2_torch, getProjectionMatrix_torch, focal2fov_torch
 
 SCALE_BIAS = 3.9
-OPACITY_BIAS = 2.0
+OPACITY_BIAS = 0.0
 
 def render_avatars(gaussians, cam_params, args, bg_color=None, debug=False):
     '''

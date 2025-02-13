@@ -550,7 +550,7 @@ class GaussianUpdater_2(nn.Module):
     def __init__(self, args, input_dim=291+3+3+4+1*3+1, hidden_dim=128, output_color_dim=3, feat_dim=14):
         super(GaussianUpdater_2, self).__init__()
         self.args = args
-        self.feat_encoder = PointTransformerV3(input_dim, enable_flash=False, dec_patch_size=[128*2, 128*2, 128*2, 128*2], enc_patch_size=[128*2, 128*2, 128*2, 128*2, 128*2])
+        self.feat_encoder = PointTransformerV3(input_dim, enable_flash=False) # , dec_patch_size=[128*2, 128*2, 128*2, 128*2], enc_patch_size=[128*2, 128*2, 128*2, 128*2, 128*2])
         self.delta_predictor = MultiHeadMLP(input_dim+64, hidden_dim, output_color_dim)
         self.grid_resolution = 100
 

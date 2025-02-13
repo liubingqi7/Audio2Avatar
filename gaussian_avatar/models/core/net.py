@@ -197,7 +197,7 @@ class AnimationNet(nn.Module):
         self.deformer = GaussianDeformer(self.args)
         self.deforme_none = simple_stack
 
-    def forward(self, gaussians, poses, cam_params):
+    def forward(self, gaussians, poses, cam_params, is_train=True):
         body_pose = poses['body_pose']
         # print(f"body_pose.shape: {body_pose.shape}")
         global_trans = poses['trans']

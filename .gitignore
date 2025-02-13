@@ -28,6 +28,7 @@ wandb/
 output/
 output_2/
 results/
+results*
 
 # IDE related
 .vscode/
