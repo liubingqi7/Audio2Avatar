@@ -22,7 +22,7 @@ class GaussianNet(nn.Module):
             self.feat_dim = (self.args.sh_degree + 1) ** 2
         else:
             self.feat_dim = 1
-        self.gaussian_updater = GaussianUpdater_2(args, input_dim=288+3+3+4+self.feat_dim*3+3+1, output_color_dim=self.feat_dim*3).to(self.args.device)
+        self.gaussian_updater = GaussianUpdater_2(args, input_dim=(288+3)*self.args.clip_length+3+4+self.feat_dim*3+3+1, output_color_dim=self.feat_dim*3).to(self.args.device)
 
         # SMPL model
         self.smpl_model = SMPL(
@@ -97,6 +97,7 @@ class GaussianNet(nn.Module):
         # Transform, Project, Sample, Update
 
         # Transform initialized gaussians using LBS
+        sampled_features = []
         for i in range(self.args.clip_length):
             transformed_xyz, transformed_rot = self.lbs_transform(smpl_params, index=i)
 
@@ -107,16 +108,20 @@ class GaussianNet(nn.Module):
             projected_gaussians = project_gaussians(transformed_gaussians, cam_params['intrinsic'], cam_params['extrinsic'])
 
             # Sample corresponding features from the feature map
-            sampled_features = sample_multi_scale_feature(feats, projected_gaussians['xyz'], index=i)
+            sampled_feature = sample_multi_scale_feature(feats, projected_gaussians['xyz'], index=i)
+            # print(f"sampled_feature.shape: {sampled_feature.shape}")
+            sampled_features.append(sampled_feature)
 
             if debug:
                 draw_gaussians(projected_gaussians, self.args, label='projected')
                 # print(f"sampled_features: {sampled_features[...,:3]}")
                 # self.gaussians['color'] = sampled_features.squeeze(0)[...,:3]
 
-            # Update gaussians
-            self.gaussians = self.gaussian_updater(self.gaussians, sampled_features.squeeze(0)) # , self.edges)
-            # print(self.gaussians['color'])
+        # Update gaussians
+        sampled_features = torch.cat(sampled_features, dim=-1)
+        # print(f"sampled_features.shape: {sampled_features.shape}")
+        self.gaussians = self.gaussian_updater(self.gaussians, sampled_features.squeeze(0)) # , self.edges)
+        # print(self.gaussians['color'])
 
     def lbs_transform(self, smpl_params, index=0):
         body_pose = smpl_params['body_pose'][:, index]

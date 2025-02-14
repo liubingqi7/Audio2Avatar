@@ -84,6 +84,8 @@ class VideoDataset(Dataset):
             mask[mask < 128] = 0
             mask[mask >= 128] = 1
             mask = mask[..., np.newaxis]
+            if mask.shape[-2] == 3:
+                mask = mask[:,:,0] 
             rgbs[i] = (rgbs[i] * mask + (1 - mask) * 255)/255.0
 
         rgbs = torch.from_numpy(np.array(rgbs, dtype=np.float32)).clamp(0.0, 1.0)
