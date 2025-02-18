@@ -99,7 +99,7 @@ def verify_smpl_params(smpl_data, timestep=None):
 
 def main():
     # 设置路径
-    data_path = 'data/gs_data/data/dynvideo_male/train'
+    data_path = 'data/gs_data/data/m4c_processed/train'
     device = torch.device('cuda')
     
     # 加载SMPL模型
@@ -359,6 +359,7 @@ def verify_smpl_rendering(cam_infos, mesh_infos, save_dir="verification_results"
         print(f"Frame {i} verification saved to {save_dir}")
 
 if __name__ == "__main__":
-    data_path = "/home/qizhu/Desktop/Work/MotionGeneration/Audio2Avatar/gaussian_avatar/data/gs_data/data/dynvideo_male"
+    data_path = "/home/qizhu/Desktop/Work/MotionGeneration/Audio2Avatar/gaussian_avatar/data/gs_data/data/m4c_processed"
     cam_infos, mesh_infos = verify_dataset_loading(data_path)
     verify_smpl_rendering(cam_infos, mesh_infos)
+    main()

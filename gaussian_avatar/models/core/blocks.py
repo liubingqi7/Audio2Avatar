@@ -9,7 +9,7 @@ from itertools import repeat
 # from torch_geometric.nn import GCNConv
 from models.utils.transform_utils import remove_outliers, MinMaxScaler
 from models.core.pointtransformer_v3 import PointTransformerV3
-from models.core.DGCNN import DGCNN
+from models.core.DGCNN import DGCNN, ShallowEdgeConv
 
 # From PyTorch internals
 def _ntuple(n):
@@ -644,7 +644,7 @@ class GaussianDeformer(nn.Module):
         self.hidden_dim = hidden_dim
         
         # Dynamic graph feature extractor
-        self.graph_encoder = DGCNN(args, input_channels=(self._gaussian_dim+self._lbs_weights_dim+self._pose_dim) * 2, output_channels=hidden_dim)
+        self.graph_encoder = ShallowEdgeConv(args, in_channels=(self._gaussian_dim+self._lbs_weights_dim+self._pose_dim) * 2, out_channels=hidden_dim)
         
         # Pose feature encoder
         self.pose_encoder = nn.Sequential(
@@ -727,11 +727,11 @@ class GaussianDeformer(nn.Module):
 
             # 5. Update gaussian parameters for this pose
             deformed_gs = {}
-            deformed_gs['xyz'] = gaussians['xyz'] # + gaussians_offset[:, :3]
-            deformed_gs['scale'] = gaussians['scale'] # + gaussians_offset[:, 3:6]
-            deformed_gs['rot'] = gaussians['rot'] # + gaussians_offset[:, 6:10]
-            deformed_gs['opacity'] = gaussians['opacity'] # + gaussians_offset[:, 10:11]
-            deformed_gs['color'] = gaussians['color'] # + gaussians_offset[:, 11:]
+            deformed_gs['xyz'] = gaussians['xyz'] + gaussians_offset[:, :3]
+            deformed_gs['scale'] = gaussians['scale'] + gaussians_offset[:, 3:6]
+            deformed_gs['rot'] = gaussians['rot'] + gaussians_offset[:, 6:10]
+            deformed_gs['opacity'] = gaussians['opacity'] + gaussians_offset[:, 10:11]
+            deformed_gs['color'] = gaussians['color'] + gaussians_offset[:, 11:]
             
             deformed_gaussians.append(deformed_gs)
             all_lbs_offsets.append(lbs_offset)
