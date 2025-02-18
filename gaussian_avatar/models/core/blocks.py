@@ -467,9 +467,9 @@ class GaussianUpdater(nn.Module):
         return gaussians
     
 
-class MultiHeadMLP(nn.Module):
+class GaussianParamPredictor(nn.Module):
     def __init__(self, input_dim, hidden_dim, color_dim):
-        super(MultiHeadMLP, self).__init__()
+        super(GaussianParamPredictor, self).__init__()
         
         self.xyz_head = nn.Sequential(
             nn.Linear(input_dim, hidden_dim),
@@ -551,7 +551,7 @@ class GaussianUpdater_2(nn.Module):
         super(GaussianUpdater_2, self).__init__()
         self.args = args
         self.feat_encoder = PointTransformerV3(input_dim, enable_flash=False) # , dec_patch_size=[128*2, 128*2, 128*2, 128*2], enc_patch_size=[128*2, 128*2, 128*2, 128*2, 128*2])
-        self.delta_predictor = MultiHeadMLP(input_dim+64, hidden_dim, output_color_dim)
+        self.delta_predictor = GaussianParamPredictor(input_dim+64, hidden_dim, output_color_dim)
         self.grid_resolution = 100
 
     def forward(self, gaussians, feats_image):
@@ -582,6 +582,7 @@ class GaussianUpdater_2(nn.Module):
         }
         model_input['grid_coord'] = torch.floor(model_input['coord']*self.grid_resolution).int() #[0~1]/grid_resolution -> int
 
+        # print(model_input['coord'].shape, model_input['grid_coord'].shape, model_input['offset'].shape, model_input['feat'].shape)
         # 2. predict delta parameters
         feat_delta = self.feat_encoder(model_input)['feat']
         feat_delta = torch.cat([feat_delta, feat], dim=1)
@@ -593,7 +594,7 @@ class GaussianUpdater_2(nn.Module):
             for k, v in gs.items():
                 # print(f"k: {k}, v.range: {delta_params[k].min().item()}, {delta_params[k].max().item()}")
                 if k == 'color':
-                    gs[k] = delta_params[k]
+                    gs[k] = gs[k] + delta_params[k]
                 else:
                     gs[k] = gs[k] + delta_params[k]
 
@@ -634,18 +635,21 @@ class GaussianUpdater_2(nn.Module):
 
 
 class GaussianDeformer(nn.Module):
-    def __init__(self, args, color_dim=3, hidden_dim=128):
+    def __init__(self, args, color_dim=3, hidden_dim=64):
         super(GaussianDeformer, self).__init__()
         self.args = args
         self.color_dim = color_dim
         self._gaussian_dim = self.color_dim + 3 + 3 + 4 + 1  # xyz + scale + rot + opacity
         self._pose_dim = 75
         self._lbs_weights_dim = 24
-        self.hidden_dim = hidden_dim
+        # self.hidden_dim = hidden_dim
+        # self.hidden_dim = 64
         
         # Dynamic graph feature extractor
-        self.graph_encoder = ShallowEdgeConv(args, in_channels=(self._gaussian_dim+self._lbs_weights_dim+self._pose_dim) * 2, out_channels=hidden_dim)
-        
+        # self.graph_encoder = ShallowEdgeConv(args, in_channels=(self._gaussian_dim+self._lbs_weights_dim+self._pose_dim) * 2, out_channels=hidden_dim)
+        self.grid_resolution = 100
+        self.graph_encoder = PointTransformerV3(in_channels=(self._gaussian_dim+self._lbs_weights_dim+self._pose_dim), enable_flash=False)
+
         # Pose feature encoder
         self.pose_encoder = nn.Sequential(
             nn.Linear(self._pose_dim, hidden_dim),
@@ -702,10 +706,28 @@ class GaussianDeformer(nn.Module):
         # print(gaussian_feats.shape, lbs_weights.shape, pose.shape)
         
         feats = torch.cat([gaussian_feats, lbs_weights, pose], dim=-1)
-        # 1. Extract local features through dynamic graph
-        graph_feats = self.graph_encoder(feats.permute(0, 2, 1)) # [N, hidden_dim]
 
-        offset_pred = self.offset_predictor(graph_feats.reshape(B*N, -1))
+        # offset = torch.tensor([gs['xyz'].shape[0] for gs in normalized_gs]).cumsum(0)
+        offset = torch.arange(1, B + 1, device=gaussians['xyz'].device) * N
+        # print(offset)
+
+        model_input = {
+            'coord': gaussians['xyz'].unsqueeze(0).expand(pose.shape[0], -1, -1).reshape(B*N, -1),
+            'grid_size': torch.ones([3])*1.0/self.grid_resolution,
+            'offset': offset.to(self.args.device),
+            'feat': feats.reshape(B*N, -1),
+            # 'batch': torch.arange(B, device=gaussians['xyz'].device)
+        }
+        model_input['grid_coord'] = torch.floor(model_input['coord']*self.grid_resolution).int() #[0~1]/grid_resolution -> int
+        # print(model_input['coord'].shape, model_input['grid_coord'].shape, model_input['offset'].shape, model_input['feat'].shape)
+
+        # 2. predict delta parameters
+        graph_feats = self.graph_encoder(model_input)['feat']
+        # print(graph_feats.shape)
+        # 1. Extract local features through dynamic graph
+        # graph_feats = self.graph_encoder(feats.permute(0, 2, 1)) # [B, N, hidden_dim]
+
+        offset_pred = self.offset_predictor(graph_feats)
         offset_pred = offset_pred.reshape(B, N, -1)
 
         # Process each pose to get multiple deformed gaussians
@@ -727,11 +749,11 @@ class GaussianDeformer(nn.Module):
 
             # 5. Update gaussian parameters for this pose
             deformed_gs = {}
-            deformed_gs['xyz'] = gaussians['xyz'] + gaussians_offset[:, :3]
+            deformed_gs['xyz'] = gaussians['xyz'] + gaussians_offset[:, :3]/10
             deformed_gs['scale'] = gaussians['scale'] + gaussians_offset[:, 3:6]
-            deformed_gs['rot'] = gaussians['rot'] + gaussians_offset[:, 6:10]
-            deformed_gs['opacity'] = gaussians['opacity'] + gaussians_offset[:, 10:11]
-            deformed_gs['color'] = gaussians['color'] + gaussians_offset[:, 11:]
+            deformed_gs['rot'] = gaussians['rot']  + gaussians_offset[:, 6:10]
+            deformed_gs['opacity'] = gaussians['opacity'] # + gaussians_offset[:, 10:11]
+            deformed_gs['color'] = gaussians['color'] # + gaussians_offset[:, 11:]
             
             deformed_gaussians.append(deformed_gs)
             all_lbs_offsets.append(lbs_offset)

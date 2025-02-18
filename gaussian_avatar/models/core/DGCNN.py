@@ -230,12 +230,13 @@ class EdgeConv(nn.Module):
         self.mlp = nn.Sequential(
             nn.Conv2d(in_channels * 2, out_channels, kernel_size=1, bias=False),
             nn.BatchNorm2d(out_channels),
-            nn.ReLU()
+            nn.LeakyReLU()
         )
 
     def forward(self, x):
-        x_trans = x.transpose(2, 1)
-        x_feature = get_graph_feature(x_trans, k=self.k)
+        # x_trans = x.transpose(2, 1)
+        x_feature = get_graph_feature(x, k=self.k)
+        # print(x_feature.shape)
         out = self.mlp(x_feature)
         out = out.max(dim=-1, keepdim=False)[0]
 
@@ -249,6 +250,7 @@ class ShallowEdgeConv(nn.Module):
         self.conv2 = EdgeConv(out_channels, out_channels, k=self.k)
 
     def forward(self, x):
+        # print(x.shape)
         x = self.conv1(x)
         x = self.conv2(x)
         return x

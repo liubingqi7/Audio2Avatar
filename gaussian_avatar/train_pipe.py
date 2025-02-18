@@ -61,10 +61,12 @@ def main():
 
     # load model
     if args.use_ckpt:
-        net_ckpt_path = os.path.join(args.ckpt_path, args.net_ckpt_path)    
-        animation_net_ckpt_path = os.path.join(args.ckpt_path, args.animation_net_ckpt_path)
-        net.load_state_dict(torch.load(net_ckpt_path))
-        animation_net.load_state_dict(torch.load(animation_net_ckpt_path))
+        if args.net_ckpt_path:
+            net_ckpt_path = os.path.join(args.ckpt_path, args.net_ckpt_path)    
+            net.load_state_dict(torch.load(net_ckpt_path))
+        if args.animation_net_ckpt_path:
+            animation_net_ckpt_path = os.path.join(args.ckpt_path, args.animation_net_ckpt_path)
+            animation_net.load_state_dict(torch.load(animation_net_ckpt_path))
         current_epoch = int(args.net_ckpt_path.split('_')[-1].split('.')[0])
         print(f"Loaded model from epoch {current_epoch}")
     else:
