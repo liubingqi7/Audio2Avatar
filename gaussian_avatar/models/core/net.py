@@ -203,8 +203,8 @@ class AnimationNet(nn.Module):
         global_trans = poses['trans']
         poses = torch.cat([global_trans, body_pose], dim=-1).squeeze(0)
         # Deform gaussians
-        deformed_gaussians, lbs_offset = self.deformer(gaussians, poses, self.lbs_weights)
-        # deformed_gaussians, lbs_offset = self.deforme_none(gaussians, poses, self.lbs_weights)
+        # deformed_gaussians, lbs_offset = self.deformer(gaussians, poses, self.lbs_weights)
+        deformed_gaussians, lbs_offset = self.deforme_none(gaussians, poses, self.lbs_weights)
 
         # Transform gaussians using LBS
         transformed_gaussians = self.lbs_transform(deformed_gaussians, poses, lbs_offset)

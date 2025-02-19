@@ -83,7 +83,7 @@ def render_avatars(gaussians, cam_params, args, bg_color=None, debug=False):
         campos=camera_center.cuda(),
         prefiltered=False,
         debug=False,
-        antialiasing=True,
+        # antialiasing=True,
     )
 
     N = gaussians['xyz'].shape[0]
@@ -128,8 +128,8 @@ def render_avatars(gaussians, cam_params, args, bg_color=None, debug=False):
 
     rasterizer = GaussianRasterizer(raster_settings=raster_settings)
 
-    rendered_image, radii, inv_depth = rasterizer(
-    # rendered_image, radii = rasterizer(
+    # rendered_image, radii, inv_depth = rasterizer(
+    rendered_image, radii = rasterizer(
         means3D = xyzs,
         means2D = screenspace_points,
         shs = colors,
