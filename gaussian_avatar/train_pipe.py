@@ -121,7 +121,7 @@ def main():
             
             # Update progress bar
             pbar.set_postfix({'l1': losses['l1'].item(),'ssim': losses['ssim'].item()})
-        
+                    
         # Print average loss for the epoch
         avg_loss = total_loss / len(dataloader)
         print(f"Epoch [{epoch+1}/{args.num_epochs}], Average Loss: {avg_loss:.4f}")
@@ -131,6 +131,7 @@ def main():
             # print(f"Saving model at epoch {epoch}, {args.ckpt_path}/gaussian_net_{epoch+1}.pth")
             torch.save(net.state_dict(), f"{args.ckpt_path}/gaussian_net_{epoch+1}.pth")
             torch.save(animation_net.state_dict(), f"{args.ckpt_path}/animation_net_{epoch+1}.pth")
+
 
 if __name__ == "__main__":
     main()

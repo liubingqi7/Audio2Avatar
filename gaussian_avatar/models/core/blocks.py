@@ -550,7 +550,8 @@ class GaussianUpdater_2(nn.Module):
     def __init__(self, args, input_dim=291+3+3+4+1*3+1, hidden_dim=128, output_color_dim=3, feat_dim=14):
         super(GaussianUpdater_2, self).__init__()
         self.args = args
-        self.feat_encoder = PointTransformerV3(input_dim, enable_flash=False) # , dec_patch_size=[128*2, 128*2, 128*2, 128*2], enc_patch_size=[128*2, 128*2, 128*2, 128*2, 128*2])
+        self.feat_encoder = PointTransformerV3(input_dim, enable_flash=False)
+        # self.feat_encoder = PointTransformerV3(input_dim, enable_flash=False, dec_patch_size=[128*2, 128*2, 128*2, 128*2], enc_patch_size=[128*2, 128*2, 128*2, 128*2, 128*2])
         self.delta_predictor = GaussianParamPredictor(input_dim+64, hidden_dim, output_color_dim)
         self.grid_resolution = 100
 
@@ -648,7 +649,7 @@ class GaussianDeformer(nn.Module):
         # Dynamic graph feature extractor
         # self.graph_encoder = ShallowEdgeConv(args, in_channels=(self._gaussian_dim+self._lbs_weights_dim+self._pose_dim) * 2, out_channels=hidden_dim)
         self.grid_resolution = 100
-        self.graph_encoder = PointTransformerV3(in_channels=(self._gaussian_dim+self._lbs_weights_dim+self._pose_dim), enable_flash=False)
+        self.graph_encoder = PointTransformerV3(in_channels=(self._gaussian_dim+self._lbs_weights_dim+self._pose_dim), enable_flash=False, dec_patch_size=[128*2, 128*2, 128*2, 128*2], enc_patch_size=[128*2, 128*2, 128*2, 128*2, 128*2])
 
         # Pose feature encoder
         self.pose_encoder = nn.Sequential(
