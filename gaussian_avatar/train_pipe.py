@@ -46,16 +46,13 @@ def main():
     
     args = parser.parse_args()
 
-    # Prepare dataset
     dataset = VideoDataset(args)
     dataloader = torch.utils.data.DataLoader(dataset, batch_size=1, collate_fn=collate_fn)
     print(f"Dataset size: {len(dataset)}")
 
-    # Initialize models
     net = GaussianNet(args).to(args.device)
     animation_net = AnimationNet(args).to(args.device)
 
-    # Create output directory
     os.makedirs(args.output_dir, exist_ok=True)
     os.makedirs(args.ckpt_path, exist_ok=True)
 
@@ -72,7 +69,6 @@ def main():
     else:
         current_epoch = 0
 
-    # Define optimizer
     optimizer = torch.optim.Adam(list(net.parameters()) + list(animation_net.parameters()), 
                                lr=args.learning_rate)
     
@@ -80,31 +76,25 @@ def main():
     for epoch in range(current_epoch, args.num_epochs):
         total_loss = 0
         
-        # Create progress bar for each epoch
         pbar = tqdm(dataloader, desc=f'Epoch {epoch+1}/{args.num_epochs}')
         
         for i, data in enumerate(pbar):
-            # Move data to device
             for k, v in data.smpl_parms.items():
                 data.smpl_parms[k] = v.to(args.device)
             for k, v in data.cam_parms.items():
                 data.cam_parms[k] = v.to(args.device)
             
-            # Get target images
             target_images = data.video.to(args.device)
             
-            # Forward pass
             gaussian = net.forward(data)
             rendered_images = animation_net.forward(gaussian, data.smpl_parms, data.cam_parms).permute(0, 2, 3, 1)
 
-            # Calculate loss
             losses = {}
             losses['l1'] = l1_loss(rendered_images, target_images.squeeze(0)) * 0.8
             losses['ssim'] = (1.0 - ssim(rendered_images, target_images.squeeze(0))) * 0.2
 
             losses['total'] = sum([v for k, v in losses.items()])
 
-            # Backward pass and optimization
             optimizer.zero_grad()
             losses['total'].backward()
             optimizer.step()
@@ -119,14 +109,11 @@ def main():
                 gt_save_path = f"{args.output_dir}/epoch_{epoch+1}_frame_{i}_gt.png"
                 plt.imsave(gt_save_path, target_images.squeeze(0)[0].detach().cpu().numpy())
             
-            # Update progress bar
             pbar.set_postfix({'l1': losses['l1'].item(),'ssim': losses['ssim'].item()})
-                    
-        # Print average loss for the epoch
+        
         avg_loss = total_loss / len(dataloader)
         print(f"Epoch [{epoch+1}/{args.num_epochs}], Average Loss: {avg_loss:.4f}")
 
-        # save model
         if epoch % 50 == 0:
             # print(f"Saving model at epoch {epoch}, {args.ckpt_path}/gaussian_net_{epoch+1}.pth")
             torch.save(net.state_dict(), f"{args.ckpt_path}/gaussian_net_{epoch+1}.pth")
