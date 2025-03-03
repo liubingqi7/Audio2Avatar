@@ -49,11 +49,11 @@ def main():
 
     # dataset = VideoDataset(args)
     dataset = BaseDataset(
-        dataset_root="/home/qizhu/Desktop/Work/MotionGeneration/Audio2Avatar/others/LIFe-GoM/data/thuman2.0/view5_train",
-        scene_list=["/home/qizhu/Desktop/Work/MotionGeneration/Audio2Avatar/others/LIFe-GoM/data/thuman2.0/test.json"],
+        dataset_root="/home/liubingqi/work/liubingqi/thuman2.0/view5_train",
+        scene_list=["/home/liubingqi/work/liubingqi/thuman2.0/train.json"],
         use_smplx=True,
-        smpl_dir="/media/qizhu/Expansion/THuman/THuman2.0_smpl/",
-        n_input_frames=1,
+        smpl_dir="/home/liubingqi/work/liubingqi/THuman/THuman2.0_smpl",
+        n_input_frames=3,
     )
 
     dataloader = torch.utils.data.DataLoader(dataset, batch_size=1, collate_fn=collate_fn)
@@ -111,19 +111,20 @@ def main():
             total_loss += losses['total'].item()
 
             # save rendered image at the end of epoch
-            if i == 0 and epoch % 50 == 0:
-                save_path = f"{args.output_dir}/epoch_{epoch+1}_frame_{i}.png"
-                # print(f"max: {rendered_images[0].max()}, min: {rendered_images[0].min()}")
-                plt.imsave(save_path, rendered_images[0].detach().cpu().numpy())
-                gt_save_path = f"{args.output_dir}/epoch_{epoch+1}_frame_{i}_gt.png"
-                plt.imsave(gt_save_path, target_images.squeeze(0)[0].detach().cpu().numpy())
+            if i == 0:
+                for j in range(4):
+                    save_path = f"{args.output_dir}/epoch_{epoch+1}_frame_{i}_view_{j}.png"
+                    # print(f"max: {rendered_images[0].max()}, min: {rendered_images[0].min()}")
+                    plt.imsave(save_path, rendered_images[j].detach().cpu().numpy())
+                    gt_save_path = f"{args.output_dir}/epoch_{epoch+1}_frame_{i}_view_{j}_gt.png"
+                    plt.imsave(gt_save_path, target_images.squeeze(0)[j].detach().cpu().numpy())
             
             pbar.set_postfix({'l1': losses['l1'].item(),'ssim': losses['ssim'].item()})
-        
+
         avg_loss = total_loss / len(dataloader)
         print(f"Epoch [{epoch+1}/{args.num_epochs}], Average Loss: {avg_loss:.4f}")
 
-        if epoch % 50 == 0:
+        if epoch % 10 == 0:
             # print(f"Saving model at epoch {epoch}, {args.ckpt_path}/gaussian_net_{epoch+1}.pth")
             torch.save(net.state_dict(), f"{args.ckpt_path}/gaussian_net_{epoch+1}.pth")
             torch.save(animation_net.state_dict(), f"{args.ckpt_path}/animation_net_{epoch+1}.pth")

@@ -199,12 +199,12 @@ class AnimationNet(nn.Module):
 
     def forward(self, gaussians, poses, cam_params, is_train=True):
         body_pose = poses['body_pose']
-        # print(f"body_pose.shape: {body_pose.shape}")
         global_trans = poses['trans']
+        # print(f"body_pose.shape: {body_pose.shape}, global_trans.shape: {global_trans.shape}")
         poses = torch.cat([global_trans, body_pose], dim=-1).squeeze(0)
         # Deform gaussians
-        # deformed_gaussians, lbs_offset = self.deformer(gaussians, poses, self.lbs_weights)
-        deformed_gaussians, lbs_offset = self.deforme_none(gaussians, poses, self.lbs_weights)
+        deformed_gaussians, lbs_offset = self.deformer(gaussians, poses, self.lbs_weights)
+        # deformed_gaussians, lbs_offset = self.deforme_none(gaussians, poses, self.lbs_weights)
 
         # Transform gaussians using LBS
         transformed_gaussians = self.lbs_transform(deformed_gaussians, poses, lbs_offset)
@@ -215,7 +215,7 @@ class AnimationNet(nn.Module):
         # render gaussian to image
         rendered_image = []
         for i in range(self.args.clip_length):
-            rendered_image.append(render_avatars(transformed_gaussians[i], cam_params, self.args, debug=False))
+            rendered_image.append(render_avatars(transformed_gaussians[i], cam_params['intrinsic'][:, i], cam_params['extrinsic'][:, i], self.args, debug=False))
 
         rendered_image = torch.stack(rendered_image)
         return rendered_image

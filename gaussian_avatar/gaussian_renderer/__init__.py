@@ -20,14 +20,14 @@ from utils.graphics_utils import getWorld2View2_torch, getProjectionMatrix_torch
 SCALE_BIAS = 3.9
 OPACITY_BIAS = 0.0
 
-def render_avatars(gaussians, cam_params, args, bg_color=None, debug=False):
+def render_avatars(gaussians, K, E, args, bg_color=None, debug=False):
     '''
     Customized render for gaussian avatar
     '''
 
     # calculate needed camera parameters
-    extrinsics = cam_params['extrinsic'][0]
-    intrinsics = cam_params['intrinsic'][0]
+    extrinsics = E[0]
+    intrinsics = K[0]
     # print(extrinsics.shape)
     # print(intrinsics.shape)
 

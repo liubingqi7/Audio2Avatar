@@ -1,9 +1,9 @@
 export CUDA_VISIBLE_DEVICES=0
-python train_pipe.py --num_epochs 5001 --rgb \
-    --clip_length 2 \
-    --smplx_model_path /media/qizhu/Expansion/SMPL_SMPLX/SMPL_models/smpl/SMPL_NEUTRAL.pkl \
-    --output_dir results_no_deform_len_4_neuman \
-    --ckpt_path ckpts_no_deform_len_4_neuman/ \
+python train_pipe.py --num_epochs 101 --rgb \
+    --clip_length 4 \
+    --smplx_model_path /home/liubingqi/work/liubingqi/SMPL_SMPLX/SMPL_models/smpl/SMPL_NEUTRAL.pkl \
+    --output_dir 3_3_1503_thuman_test \
+    --ckpt_path 3_3_1503_thuman_test/ \
     --data_folder data/gs_data/data/neuman_bike/ \
     --image_height 1024 \
     --image_width 1024 \

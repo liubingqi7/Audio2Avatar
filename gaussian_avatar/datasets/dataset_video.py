@@ -46,8 +46,8 @@ class VideoDataset(Dataset):
                 video_chunk = images[start:start + self.clip_length]
                 mask_chunk = masks[start:start + self.clip_length]
                 camera_chunk = {
-                    'extrinsic': camera_params['extrinsic'],
-                    'intrinsic': camera_params['intrinsic']
+                    'extrinsic': camera_params['extrinsic'].unsqueeze(0).repeat(self.clip_length, 1, 1),
+                    'intrinsic': camera_params['intrinsic'].unsqueeze(0).repeat(self.clip_length, 1, 1)
                 }
                 smpl_chunk = {
                     'body_pose': smpl_params['body_pose'][start:start + self.clip_length],

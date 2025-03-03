@@ -201,8 +201,10 @@ class BaseDataset(torch.utils.data.Dataset):
         body_pose = torch.from_numpy(data['body_pose']).to(torch.float32)
 
         global_orient = torch.zeros(1, 1, 3, dtype=torch.float32)
-        smpl_params['body_pose'] = torch.cat([global_orient, body_pose], dim=1)
-        smpl_params['trans'] = torch.tensor([0.0018, 0.2233, -0.0282], device='cuda:0', dtype=torch.float32) + dst_tpose_joints[0][0]
+        smpl_params['body_pose'] = torch.cat([global_orient, body_pose], dim=1).reshape(1, -1)
+        smpl_params['trans'] = torch.tensor([0.0018, 0.2233, -0.0282], dtype=torch.float32) + dst_tpose_joints[0]
+        # print(smpl_params['trans'])
+        # print(dst_tpose_joints.shape)
         smpl_params['beta'] = torch.from_numpy(data['betas']).to(torch.float32)
 
         alpha = torch.from_numpy(alpha[:, :, 0].astype(np.float32))
@@ -256,7 +258,7 @@ class BaseDataset(torch.utils.data.Dataset):
                 results[key] = torch.stack(item, dim=0)
             if key == 'smpl_parms':
                 for k, v in item.items():
-                    item[k] = item[k].repeat(len(input_idxs) + 1, 1, 1)
+                    item[k] = item[k].repeat(len(input_idxs) + 1, 1)
 
         frame_name = self.framelists[scene_id][self.frame_ids_per_frame[idx]]
         results['frame_name'] = f'scene_{scene_name}_{frame_name}'
