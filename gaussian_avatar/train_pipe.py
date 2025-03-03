@@ -102,7 +102,7 @@ def main():
             total_loss += losses['total'].item()
 
             # save rendered image at the end of epoch
-            if i == 0:
+            if i == 0 and epoch % 50 == 0:
                 save_path = f"{args.output_dir}/epoch_{epoch+1}_frame_{i}.png"
                 # print(f"max: {rendered_images[0].max()}, min: {rendered_images[0].min()}")
                 plt.imsave(save_path, rendered_images[0].detach().cpu().numpy())

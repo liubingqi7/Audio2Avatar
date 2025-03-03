@@ -80,3 +80,24 @@ def camera_to_JSON(id, camera : Camera):
         'fx' : fov2focal(camera.FovX, camera.width)
     }
     return camera_entry
+
+#################THUMAN#################
+
+def apply_global_tfm_to_camera(E, Rh, Th):
+    r""" Get camera extrinsics that considers global transformation.
+
+    Args:
+        - E: Array (3, 3)
+        - Rh: Array (3, )
+        - Th: Array (3, )
+        
+    Returns:
+        - Array (3, 3)
+    """
+
+    global_tfms = np.eye(4)  #(4, 4)
+    global_rot = cv2.Rodrigues(Rh)[0].T
+    global_trans = Th
+    global_tfms[:3, :3] = global_rot
+    global_tfms[:3, 3] = -global_rot.dot(global_trans)
+    return E.dot(np.linalg.inv(global_tfms))

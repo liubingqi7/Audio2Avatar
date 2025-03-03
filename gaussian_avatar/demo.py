@@ -64,32 +64,45 @@ def main():
     dataset = VideoDataset(args)
     dataloader = torch.utils.data.DataLoader(dataset, batch_size=1, collate_fn=collate_fn)
 
-    data = next(iter(dataloader))
-    for k, v in data.smpl_parms.items():
-        data.smpl_parms[k] = v.to(args.device)
-    for k, v in data.cam_parms.items():
-        data.cam_parms[k] = v.to(args.device)
+    with torch.no_grad():
+        for i, data in enumerate(dataloader):
+            for k, v in data.smpl_parms.items():
+                data.smpl_parms[k] = v.to(args.device)
+            for k, v in data.cam_parms.items():
+                data.cam_parms[k] = v.to(args.device)
+
+            target_images = data.video.to(args.device)
+            
+            gaussian = net.forward(data)
+            rendered_images = animation_net.forward(gaussian, data.smpl_parms, data.cam_parms).permute(0, 2, 3, 1)
+
+            for j in range(rendered_images.shape[0]):
+                save_path = f"{args.output_dir}/demo_frame_{i*4+j}_rendered.png"
+                plt.imsave(save_path, rendered_images[j].detach().cpu().numpy())
+                gt_path = f"{args.output_dir}/demo_frame_{i*4+j}_gt.png"
+                plt.imsave(gt_path, target_images[0, j].detach().cpu().numpy())
+                print(f"Saved rendered and gt image to {save_path}")
+
     
-    gaussian = net.forward(data)
+    # smpl_params_list = []
+    # cam_params_list = []
+    # for i, batch in enumerate(dataloader):
+    #     if i >= 20:
+    #         break
+    #     for k, v in batch.smpl_parms.items():
+    #         batch.smpl_parms[k] = v.to(args.device)
+    #     for k, v in batch.cam_parms.items():
+    #         batch.cam_parms[k] = v.to(args.device)
+    #     smpl_params_list.append(batch.smpl_parms)
+    #     cam_params_list.append(batch.cam_parms)
     
-    smpl_params_list = []
-    cam_params_list = []
-    for i, batch in enumerate(dataloader):
-        if i >= 20:
-            break
-        for k, v in batch.smpl_parms.items():
-            batch.smpl_parms[k] = v.to(args.device)
-        for k, v in batch.cam_parms.items():
-            batch.cam_parms[k] = v.to(args.device)
-        smpl_params_list.append(batch.smpl_parms)
-        cam_params_list.append(batch.cam_parms)
-    
-    for i, (smpl_params, cam_params) in enumerate(zip(smpl_params_list, cam_params_list)):
-        rendered_image = animation_net.forward(gaussian, smpl_params, cam_params).permute(0, 2, 3, 1)
+    # for i, (smpl_params, cam_params) in enumerate(zip(smpl_params_list, cam_params_list)):
+    #     rendered_image = animation_net.forward(gaussian, smpl_params, cam_params).permute(0, 2, 3, 1)
+    #     print(rendered_image.shape)
         
-        save_path = f"{args.output_dir}/demo_frame_{i}.png"
-        plt.imsave(save_path, rendered_image[0].detach().cpu().numpy())
-        print(f"Saved rendered image to {save_path}")
+    #     save_path = f"{args.output_dir}/demo_frame_{i}.png"
+    #     plt.imsave(save_path, rendered_image[0].detach().cpu().numpy())
+    #     print(f"Saved rendered image to {save_path}")
 
 if __name__ == "__main__":
     main()
