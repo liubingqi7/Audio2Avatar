@@ -2,8 +2,9 @@ import torch
 import os
 from models.core.net import GaussianNet, AnimationNet
 from datasets.dataset_video import VideoDataset
+from datasets.dataset_thuman import BaseDataset
 from argparse import ArgumentParser
-from datasets.utils import collate_fn
+from utils.data_utils import collate_fn
 import matplotlib.pyplot as plt
 import torch.nn as nn
 from tqdm import tqdm
@@ -46,7 +47,15 @@ def main():
     
     args = parser.parse_args()
 
-    dataset = VideoDataset(args)
+    # dataset = VideoDataset(args)
+    dataset = BaseDataset(
+        dataset_root="/home/qizhu/Desktop/Work/MotionGeneration/Audio2Avatar/others/LIFe-GoM/data/thuman2.0/view5_train",
+        scene_list=["/home/qizhu/Desktop/Work/MotionGeneration/Audio2Avatar/others/LIFe-GoM/data/thuman2.0/test.json"],
+        use_smplx=True,
+        smpl_dir="/media/qizhu/Expansion/THuman/THuman2.0_smpl/",
+        n_input_frames=1,
+    )
+
     dataloader = torch.utils.data.DataLoader(dataset, batch_size=1, collate_fn=collate_fn)
     print(f"Dataset size: {len(dataset)}")
 

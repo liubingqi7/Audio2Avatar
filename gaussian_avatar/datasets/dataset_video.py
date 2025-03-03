@@ -5,7 +5,7 @@ from torch.utils.data import Dataset
 from os.path import join
 from PIL import Image
 import imageio
-from datasets.utils import VideoData
+from utils.data_utils import VideoData
 from argparse import ArgumentParser
 import sys
 import smplx
