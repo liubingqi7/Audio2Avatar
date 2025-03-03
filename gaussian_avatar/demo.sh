@@ -5,6 +5,7 @@ python demo.py --rgb \
     --data_folder data/gs_data/data/neuman_bike/ \
     --image_height 711 \
     --image_width 1265 \
-    --net_ckpt_path gaussian_net_101.pth \
+    --net_ckpt_path gaussian_net_1601.pth \
+    --animation_net_ckpt_path animation_net_1601.pth \
+
     # --smplx_model_path smpl/SMPL_NEUTRAL.pkl \
-    # --animation_net_ckpt_path animation_net_501.pth \

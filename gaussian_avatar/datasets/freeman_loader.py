@@ -32,7 +32,7 @@ class FreeMan:
         # Init paths
         # sub_dir = os.path.join(base_dir, f'{int(fps)}FPS')
         sub_dir = base_dir
-        self.video_dir = os.path.join(sub_dir, 'videos/')
+        self.video_dir = os.path.join(sub_dir, 'videos_25fps/subj03/')
         self.camera_dir = os.path.join(sub_dir, 'cameras/')
         self.motion_dir = os.path.join(sub_dir, 'motions/')
         self.keypoints2d_dir = os.path.join(sub_dir, 'keypoints2d/')      # kpts2d_reproj_original
@@ -165,8 +165,10 @@ class FreeMan:
     def load_frames(cls, video_path, frame_ids=None, fps=-1):
         """Load a single or multiple frames from a video."""
         if frame_ids is None:
-            frame_ids = range(1e6)
-        assert isinstance(frame_ids, list)
+            frame_ids = list(range(int(1e6)))
+        elif not isinstance(frame_ids, list):
+            frame_ids = list(frame_ids)
+            
         if not os.path.exists(video_path):
             return None
         cap = cv2.VideoCapture(video_path)
@@ -189,41 +191,52 @@ class FreeMan:
 
         cap.release()
         return images
-    
-class FreeManDataset:
-    def __init__(self, args):
-        self.args = args
-        self.free_man = FreeMan(args.data_path)
-        self.scenes = self.free_man.get_children_sessions('subj01')
 
-    def __len__(self):
-        return 
+class Freeman_Modified(FreeMan):
+    def __init__(self, base_dir, fps=30, subject='subj03', split=''):
+        super().__init__(base_dir, fps, split)
+        self.video_dir = os.path.join(base_dir, 'videos_25fps/', subject)
+        self.camera_dir = os.path.join(base_dir, 'cameras/')
+        self.motion_dir = os.path.join(base_dir, 'motions/')
+        
+    def load_motion(self, session_name, cam_index):
+        session_name_motion = f'{session_name}_view{cam_index-1}'
+        file_path = os.path.join(self.motion_dir, f'{session_name_motion}.npy')
+        assert os.path.exists(file_path), f'File {file_path} does not exist!'
+        # with open(file_path, 'rb') as f:
+        #     data = pickle.load(f)
+        data = np.load(file_path, allow_pickle=True)[0]
+        smpl_poses = data['smpl_poses']  # (N, 24, 3)
+        smpl_scaling = data['smpl_scaling']  # (1,)
+        global_orient = data['global_orient']  # (N, 3)
+        smpl_trans = data['smpl_transl']  # (N, 3)
+        smpl_betas = data['smpl_betas']  # (10,)
+        return smpl_poses, smpl_scaling, global_orient, smpl_trans, smpl_betas
 
 if __name__ == '__main__':
-    free_man = FreeMan(base_dir='./data/freeman/wangjiongwow___FreeMan', fps=25)
+    free_man = Freeman_Modified(base_dir='./data/freeman/wangjiongwow___FreeMan', fps=25, subject='subj03')
     subj03_sessions = free_man.get_children_sessions('subj03')
     print(len(subj03_sessions))
 
     # 假设我们要读取第一个会话的相机参数和运动参数
     if subj03_sessions:
         session_name = subj03_sessions[0]
-        cam_index = 1  # 假设我们要读取相机索引为 1 的参数
+        cam_index = 3  # 假设我们要读取相机索引为 1 的参数
 
         # 读取相机参数
-        camera_group, camera_params = FreeMan.load_camera_group(free_man.camera_dir, session_name)
+        camera_group, camera_params = free_man.load_camera_group(free_man.camera_dir, session_name)
         print(f"Camera Parameters for session {session_name}:")
-        print(camera_params)
+        print(camera_group)
 
-        # 读取视频路径
+        # 读取视频路径      
         video_path = free_man.get_video_path(session_name, cam_index)
         if video_path:
             # 读取图片
             frame_ids = [0, 1, 2]  # 假设我们要读取前 3 帧
-            images = FreeMan.load_frames(video_path, frame_ids)
+            images = free_man.load_frames(video_path, frame_ids)
             print(f"Loaded images shape: {images.shape}")
 
         # 读取运动参数
-        session_name_motion = f'{session_name}_view{cam_index-1}'
-        smpl_poses, smpl_scaling, smpl_trans = FreeMan.load_motion(free_man.motion_dir, session_name_motion)
+        smpl_poses, smpl_scaling, global_orient, smpl_trans, smpl_betas = free_man.load_motion(session_name, cam_index)
         print(f"SMPL Poses for session {session_name}:")
-        print(smpl_poses)
+        print(f"smpl_poses: {smpl_poses}, smpl_scaling: {smpl_scaling}, global_orient: {global_orient}, smpl_trans: {smpl_trans}, smpl_betas: {smpl_betas.max()}")
