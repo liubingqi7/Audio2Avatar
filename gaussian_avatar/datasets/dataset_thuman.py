@@ -15,8 +15,9 @@ from utils.body_utils import \
     approx_gaussian_bone_volumes, \
     get_joints_from_pose
 from utils.file_utils import list_files, split_path
-from utils.camera_utils import apply_global_tfm_to_camera
+# from utils.camera_utils import apply_global_tfm_to_camera
 from utils.graphics_utils import subdivide
+from utils.data_utils import VideoData
 
 import matplotlib.pyplot as plt
 
@@ -54,11 +55,11 @@ class BaseDataset(torch.utils.data.Dataset):
         self.image_dirs = [os.path.join(dataset_root, scene_name, 'images') for scene_name in self.scene_list]
         self.mask_dirs = [os.path.join(dataset_root, scene_name, 'masks') for scene_name in self.scene_list]
 
-        # self.canonical_infos = [
-        #     self.load_canonical_joints(scene_name, subdivide_iter=subdivide_iter) for scene_name in self.scene_list
-        # ]
+        self.canonical_infos = [
+            self.load_canonical_joints(scene_name, subdivide_iter=subdivide_iter) for scene_name in self.scene_list
+        ]
 
-        self.smpl_dir = smpl_dir
+        self.smpl_dirs = [os.path.join(smpl_dir, scene_name + '_smpl.pkl') for scene_name in self.scene_list]
 
         self.cameras = [self.load_train_cameras(scene_name) for scene_name in self.scene_list]
         self.mesh_infos = [self.load_train_mesh_infos(scene_name) for scene_name in self.scene_list]
@@ -166,24 +167,16 @@ class BaseDataset(torch.utils.data.Dataset):
 
     def load_data(self, scene_id, idx, bgcolor=None):
         frame_name = self.framelists[scene_id][idx]
-        results = {}
-
-        if bgcolor is None:
-            bgcolor = (np.random.rand(3) * 255.).astype('float32')
 
         img, alpha, orig_W, orig_H = self.load_image(scene_id, frame_name, bgcolor)
-        img = (img / 255.).astype('float32')
-        results.update({
-            'target_rgbs': img,
-            'target_masks': alpha[:, :, 0].astype(np.float32)
-        })
+        img = torch.from_numpy((img / 255.).astype('float32'))
 
         dst_skel_info = self.query_dst_skeleton(scene_id, frame_name)
-        dst_poses = dst_skel_info['poses']
-        dst_tpose_joints = dst_skel_info['dst_tpose_joints']
+        dst_poses = torch.from_numpy(dst_skel_info['poses'])
+        dst_tpose_joints = torch.from_numpy(dst_skel_info['dst_tpose_joints'])
 
         assert frame_name in self.cameras[scene_id]
-        K = self.cameras[scene_id][frame_name]['intrinsics'][:3, :3].copy()
+        K = torch.from_numpy(self.cameras[scene_id][frame_name]['intrinsics'][:3, :3].copy()).to(torch.float32)
         if self.target_size is not None:
             scale_w, scale_h = self.target_size[0] / orig_W, self.target_size[1] / orig_H
         else:
@@ -192,36 +185,28 @@ class BaseDataset(torch.utils.data.Dataset):
         K[1:2] *= scale_h
 
         E = self.cameras[scene_id][frame_name]['extrinsics']
-        E = apply_global_tfm_to_camera(
+        E = torch.from_numpy(apply_global_tfm_to_camera(
             E=E,
             Rh=dst_skel_info['Rh'],
-            Th=dst_skel_info['Th'])
+            Th=dst_skel_info['Th'])).to(torch.float32)
+        
+        smpl_params = {
+            'body_pose': [],
+            'trans': [],
+            'beta': [],
+        }
+        with open(self.smpl_dirs[scene_id], 'rb') as f:
+            data = pickle.load(f)
 
-        results.update({
-            'K': K.astype(np.float32),
-            'E': E.astype(np.float32),
-        })
+        body_pose = torch.from_numpy(data['body_pose']).to(torch.float32)
 
-        dst_Rs, dst_Ts = body_pose_to_body_RTs(
-            dst_poses, dst_tpose_joints, use_smplx=self.use_smplx
-        )
-        results.update({
-            'dst_Rs': dst_Rs,
-            'dst_Ts': dst_Ts,
-        })
+        global_orient = torch.zeros(1, 1, 3, dtype=torch.float32)
+        smpl_params['body_pose'] = torch.cat([global_orient, body_pose], dim=1)
+        smpl_params['trans'] = torch.tensor([0.0018, 0.2233, -0.0282], device='cuda:0', dtype=torch.float32) + dst_tpose_joints[0][0]
+        smpl_params['beta'] = torch.from_numpy(data['betas']).to(torch.float32)
 
-        # 1. ignore global orientation
-        # 2. add a small value to avoid all zeros
-        dst_posevec_69 = dst_poses.reshape(-1)[3:] + 1e-2
-        results.update({
-            'dst_posevec': dst_posevec_69,
-        })
-
-        results.update({
-            'dst_tpose_joints': dst_tpose_joints,
-        })
-
-        return results
+        alpha = torch.from_numpy(alpha[:, :, 0].astype(np.float32))
+        return img, alpha, K, E, smpl_params
 
     def get_total_frames(self):
         return sum([len(framelist) for framelist in self.framelists])
@@ -243,44 +228,50 @@ class BaseDataset(torch.utils.data.Dataset):
         results = {
             'K': [],
             'E': [],
-            'dst_Rs': [],
-            'dst_Ts': [],
-            'dst_posevec': [],
-            'dst_tpose_joints': [],
+            'smpl_parms': [],
             'target_rgbs': [],
             'target_masks': [],
         }
         if self.bgcolor is None:
-            bgcolor = (np.random.rand(3) * 255.).astype('float32')
-        else:
-            bgcolor = np.array(self.bgcolor, dtype='float32')
+            # bgcolor = (np.random.rand(3) * 255.).astype('float32')
+            bgcolor = np.array([255., 255., 255.], dtype='float32')
 
         input_idxs = self.gen_input_idxs(idx)
-        results['bgcolor'] = bgcolor / 255.
         for input_idx in input_idxs:
-            result = self.load_data(scene_id, input_idx, bgcolor)
-            for key, item in result.items():
-                results[key].append(item)
+            rgb, alpha, K, E, smpl_parms = self.load_data(scene_id, input_idx, bgcolor)
+            results['target_rgbs'].append(rgb)
+            results['target_masks'].append(alpha)
+            results['K'].append(K)
+            results['E'].append(E)
 
-        result = self.load_data(scene_id, self.frame_ids_per_frame[idx], bgcolor)
-        for key, item in result.items():
-            results[key].append(item)
+        rgb, alpha, K, E, smpl_parms = self.load_data(scene_id, self.frame_ids_per_frame[idx], bgcolor)
+        results['target_rgbs'].append(rgb)
+        results['target_masks'].append(alpha)
+        results['K'].append(K)
+        results['E'].append(E)
+        results['smpl_parms'] = smpl_parms
 
         for key, item in results.items():
-            results[key] = np.stack(item, axis=0)
+            if key != 'frame_name' and key != 'smpl_parms':
+                results[key] = torch.stack(item, dim=0)
+            if key == 'smpl_parms':
+                for k, v in item.items():
+                    item[k] = item[k].repeat(len(input_idxs) + 1, 1, 1)
 
         frame_name = self.framelists[scene_id][self.frame_ids_per_frame[idx]]
         results['frame_name'] = f'scene_{scene_name}_{frame_name}'
 
-        # shared information
-        canonical_joints, canonical_vertices, canonical_lbs_weights, canonical_edges, canonical_faces \
-            = self.canonical_infos[scene_id]
+        cam_params = {}
+        cam_params['extrinsic'] = results['E']
+        cam_params['intrinsic'] = results['K']
 
-        cnl_gtfms = get_canonical_global_tfms(canonical_joints, use_smplx=self.use_smplx)
-        results['cnl_gtfms'] = np.linalg.inv(cnl_gtfms)
-        results['canonical_vertices'] = canonical_vertices
-
-        return results
+        return VideoData(
+            video=results['target_rgbs'], 
+            smpl_parms=results['smpl_parms'], 
+            cam_parms=cam_params, 
+            width=torch.tensor(results['target_rgbs'].shape[2]), 
+            height=torch.tensor(results['target_rgbs'].shape[3]),
+        )
 
     def get_canonical_info(self):
         # only return the canonical information shared across the dataset
@@ -293,3 +284,23 @@ class BaseDataset(torch.utils.data.Dataset):
             'canonical_vertex': canonical_vertex,
         }
         return info
+
+
+def apply_global_tfm_to_camera(E, Rh, Th):
+    r""" Get camera extrinsics that considers global transformation.
+
+    Args:
+        - E: Array (3, 3)
+        - Rh: Array (3, )
+        - Th: Array (3, )
+        
+    Returns:
+        - Array (3, 3)
+    """
+
+    global_tfms = np.eye(4)  #(4, 4)
+    global_rot = cv2.Rodrigues(Rh)[0].T
+    global_trans = Th
+    global_tfms[:3, :3] = global_rot
+    global_tfms[:3, 3] = -global_rot.dot(global_trans)
+    return E.dot(np.linalg.inv(global_tfms))
