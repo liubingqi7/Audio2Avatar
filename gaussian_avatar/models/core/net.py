@@ -113,7 +113,7 @@ class GaussianNet(nn.Module):
             sampled_features.append(sampled_feature)
 
             if debug:
-                draw_gaussians(projected_gaussians, self.args, label='projected')
+                draw_gaussians(projected_gaussians, self.args, label=f'projected{i}')
                 # print(f"sampled_features: {sampled_features[...,:3]}")
                 # self.gaussians['color'] = sampled_features.squeeze(0)[...,:3]
 
@@ -316,14 +316,14 @@ def simple_stack(gaussians, poses, lbs_weights):
 
 def draw_gaussians(projected_gaussians, args, label='projected'):
     # 创建一个空白图像
-    img = torch.zeros((1080, 1080, 3), device=args.device)
+    img = torch.zeros((args.image_height, args.image_width, 3), device=args.device)
     
     # 将投影点的坐标四舍五入到最近的整数
     projected_points = projected_gaussians['xyz'].round().long()
     
     # 确保点在图像范围内
-    mask = (projected_points[..., 0] >= 0) & (projected_points[..., 0] < 1080) & \
-            (projected_points[..., 1] >= 0) & (projected_points[..., 1] < 1080)
+    mask = (projected_points[..., 0] >= 0) & (projected_points[..., 0] < args.image_height) & \
+            (projected_points[..., 1] >= 0) & (projected_points[..., 1] < args.image_width)
     
     # 只保留在图像范围内的点
     valid_points = projected_points[mask]

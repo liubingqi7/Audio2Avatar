@@ -76,12 +76,12 @@ def main():
             gaussian = net.forward(data)
             rendered_images = animation_net.forward(gaussian, data.smpl_parms, data.cam_parms).permute(0, 2, 3, 1)
 
-        for j in range(rendered_images.shape[0]):
-            save_path = f"{args.output_dir}/demo_frame_{i*4+j}_rendered.png"
-            plt.imsave(save_path, rendered_images[j].detach().cpu().numpy())
-            gt_path = f"{args.output_dir}/demo_frame_{i*4+j}_gt.png"
-            plt.imsave(save_path, target_images[0, j].detach().cpu().numpy())
-            print(f"Saved rendered and gt image to {save_path}")
+            for j in range(rendered_images.shape[0]):
+                save_path = f"{args.output_dir}/demo_frame_{i*4+j}_rendered.png"
+                plt.imsave(save_path, rendered_images[j].detach().cpu().numpy())
+                gt_path = f"{args.output_dir}/demo_frame_{i*4+j}_gt.png"
+                plt.imsave(gt_path, target_images[0, j].detach().cpu().numpy())
+                print(f"Saved rendered and gt image to {save_path}")
 
     
     # smpl_params_list = []
