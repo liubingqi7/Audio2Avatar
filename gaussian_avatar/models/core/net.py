@@ -39,6 +39,7 @@ class GaussianNet(nn.Module):
         self.posedirs = self.smpl_model.posedirs # [24, 3]
         self.J_regressor = self.smpl_model.J_regressor # [24, 6890]
         self.v_template = self.smpl_model.v_template # [6890, 3]
+        self.shapedirs = self.smpl_model.shapedirs
         self.joints = torch.einsum('bik,ji->bjk', [self.v_template.unsqueeze(0), self.J_regressor]) # [1, 24, 3]
         self.edges = torch.tensor(get_edges_from_faces(self.smpl_model.faces)).to(self.args.device) # [2, 20664]
         
@@ -67,13 +68,18 @@ class GaussianNet(nn.Module):
 
     def init_gaussians(self, smpl_params):
         # Init gaussians on SMPL vertices
-        verts = self.smpl_model.v_template
+        # verts = self.smpl_model.v_template
+
+        # transform verts according to beta
+
+        blend_shape = torch.einsum('bl,mkl->bmk', [smpl_params['beta'][0, 0:1], self.shapedirs])
+        v_shaped = self.v_template + blend_shape
         # self.joints = init_smpl.joints
 
         # print(f"verts.shape: {verts.shape}")
 
         # Init color from rgb
-        self.num_gaussians = verts.shape[0]
+        self.num_gaussians = v_shaped.shape[1]
 
         if not self.args.rgb:
             fused_color = torch.tensor(np.random.random((self.num_gaussians, 3)) / 255.0).float().to(self.args.device)
@@ -85,7 +91,7 @@ class GaussianNet(nn.Module):
 
         # Init gaussians on SMPL vertices
         self.gaussians = {
-            'xyz': verts.clone(), # [N, 3]
+            'xyz': v_shaped[0].clone(), # [N, 3]
             'rot': torch.zeros(self.num_gaussians, 4).to(self.args.device), # [N, 4]
             'color': features.reshape(self.num_gaussians, -1), # [N, feat_dim*3]
             'scale': torch.log(torch.ones((self.num_gaussians, 3), device="cuda")), # [N, 3]

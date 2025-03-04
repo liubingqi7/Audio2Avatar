@@ -10,6 +10,8 @@ import torch.nn as nn
 from tqdm import tqdm
 from models.utils.loss_utils import l1_loss, ssim
 
+# import 
+
 def main():
     parser = ArgumentParser()
     parser = ArgumentParser(description="Video Dataset Parameters")
@@ -56,7 +58,7 @@ def main():
         n_input_frames=3,
     )
 
-    dataloader = torch.utils.data.DataLoader(dataset, batch_size=1, collate_fn=collate_fn)
+    dataloader = torch.utils.data.DataLoader(dataset, batch_size=1, collate_fn=collate_fn, shuffle=True)
     print(f"Dataset size: {len(dataset)}")
 
     net = GaussianNet(args).to(args.device)
