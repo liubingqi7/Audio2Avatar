@@ -107,22 +107,22 @@ def _subdivide_smpl_model(smpl=None, smoothing=False, SMPL_PATH=None):
         )        
         sub_vertices = sub_mesh.vertices
                        
-    new_smpl = SMPL(SMPL_PATH)
+    # new_smpl = SMPL(SMPL_PATH)
     device = smpl.lbs_weights.device
     
-    new_smpl.lbs_weights = torch.from_numpy(attr["lbs_weights"]).float().to(device)
+    smpl.lbs_weights = torch.from_numpy(attr["lbs_weights"]).float().to(device)
     posedirs = np.zeros((207, sub_vertices.shape[0] * 3)).astype(np.float32)
     shapedirs = attr["shapedirs"].reshape(-1, 3, 10)
     J_regressor = np.zeros_like(attr["J_regressor"].transpose(1, 0))
     J_regressor[:, :n_verts] = init_J_regressor.transpose(1, 0)
-    new_smpl.posedirs = torch.from_numpy(posedirs).float().to(device)
-    new_smpl.shapedirs = torch.from_numpy(shapedirs).float().to(device)
-    new_smpl.v_template = torch.from_numpy(sub_vertices).float().to(device)
-    new_smpl.faces_tensor = torch.from_numpy(sub_faces).long().to(device)
-    new_smpl.J_regressor = torch.from_numpy(J_regressor).float().to(device)
-    new_smpl.faces = sub_faces     
-    new_smpl.v_id = attr["v_id"].astype(int)
-    return new_smpl    
+    smpl.posedirs = torch.from_numpy(posedirs).float().to(device)
+    smpl.shapedirs = torch.from_numpy(shapedirs).float().to(device)
+    smpl.v_template = torch.from_numpy(sub_vertices).float().to(device)
+    smpl.faces_tensor = torch.from_numpy(sub_faces).long().to(device)
+    smpl.J_regressor = torch.from_numpy(J_regressor).float().to(device)
+    smpl.faces = sub_faces     
+    smpl.v_id = attr["v_id"].astype(int)
+    return smpl    
 
 
 def subdivide_smpl_model(smpl=None, smoothing=False, n_iter=1, SMPL_PATH=None):     

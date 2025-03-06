@@ -10,6 +10,8 @@ from itertools import repeat
 from models.utils.transform_utils import remove_outliers, MinMaxScaler
 from models.core.pointtransformer_v3 import PointTransformerV3
 from models.core.DGCNN import DGCNN, ShallowEdgeConv
+from pytorch3d.transforms import quaternion_multiply
+
 
 # From PyTorch internals
 def _ntuple(n):
@@ -550,7 +552,7 @@ class GaussianUpdater_2(nn.Module):
     def __init__(self, args, input_dim=291+3+3+4+1*3+1, hidden_dim=128, output_color_dim=3, feat_dim=14):
         super(GaussianUpdater_2, self).__init__()
         self.args = args
-        self.feat_encoder = PointTransformerV3(input_dim, enable_flash=False)
+        self.feat_encoder = PointTransformerV3(input_dim, enable_flash=True)
         # self.feat_encoder = PointTransformerV3(input_dim, enable_flash=False, dec_patch_size=[128*2, 128*2, 128*2, 128*2], enc_patch_size=[128*2, 128*2, 128*2, 128*2, 128*2])
         self.delta_predictor = GaussianParamPredictor(input_dim+64, hidden_dim, output_color_dim)
         self.grid_resolution = 100
@@ -558,12 +560,13 @@ class GaussianUpdater_2(nn.Module):
     def forward(self, gaussians, feats_image):
         # 1. normalize gaussian position to [-1, 1]
         gaussians = [gaussians]
-        normalized_gs, scalers = self.normalized_gs(gaussians)
-        offset = torch.tensor([gs['xyz'].shape[0] for gs in normalized_gs]).cumsum(0)
+        # normalized_gs, scalers = self.normalized_gs(gaussians)
+        offset = torch.tensor([gs['xyz'].shape[0] for gs in gaussians]).cumsum(0)
 
         feat = []
         
-        for gs in normalized_gs:
+        # for gs in normalized_gs:
+        for gs in gaussians:
             feat_list = []
             for key in gs.keys():
                 if key=='xyz':
@@ -576,7 +579,8 @@ class GaussianUpdater_2(nn.Module):
         feat = torch.cat(feat, dim=0) #Bx-N, D
         feat = torch.cat([feat, feats_image], dim=1)
         model_input = {
-            'coord': torch.cat([gs['xyz'] for gs in normalized_gs], dim=0),
+            # 'coord': torch.cat([gs['xyz'] for gs in normalized_gs], dim=0),
+            'coord': torch.cat([gs['xyz'] for gs in gaussians], dim=0),
             'grid_size': torch.ones([3])*1.0/self.grid_resolution,
             'offset': offset.to(self.args.device),
             'feat': feat,
@@ -591,15 +595,20 @@ class GaussianUpdater_2(nn.Module):
 
         # print(gaussians[0].keys())
         # 3. update gaussian parameters and unnormalize
-        for gs in normalized_gs:
+        # for gs in normalized_gs:
+        for gs in gaussians:
             for k, v in gs.items():
                 # print(f"k: {k}, v.range: {delta_params[k].min().item()}, {delta_params[k].max().item()}")
                 if k == 'color':
                     gs[k] = gs[k] + delta_params[k]
+                elif k == 'rot':
+                    delta_params[k] = delta_params[k] / (delta_params[k].norm(dim=-1, keepdim=True) + 1e-8)
+                    gs[k] = quaternion_multiply(gs[k], delta_params[k])
                 else:
                     gs[k] = gs[k] + delta_params[k]
 
-        unnormalized_gs = self.unnormalized_gs(normalized_gs, scalers)
+        # unnormalized_gs = self.unnormalized_gs(normalized_gs, scalers)
+        unnormalized_gs = gaussians
 
         return unnormalized_gs[0]
 
@@ -649,23 +658,23 @@ class GaussianDeformer(nn.Module):
         # Dynamic graph feature extractor
         # self.graph_encoder = ShallowEdgeConv(args, in_channels=(self._gaussian_dim+self._lbs_weights_dim+self._pose_dim) * 2, out_channels=hidden_dim)
         self.grid_resolution = 100
-        self.graph_encoder = PointTransformerV3(in_channels=(self._gaussian_dim+self._lbs_weights_dim+self._pose_dim), enable_flash=False, dec_patch_size=[128*2, 128*2, 128*2, 128*2], enc_patch_size=[128*2, 128*2, 128*2, 128*2, 128*2])
+        self.graph_encoder = PointTransformerV3(in_channels=(self._gaussian_dim+self._lbs_weights_dim+self._pose_dim), enable_flash=True, dec_patch_size=[128*2, 128*2, 128*2, 128*2], enc_patch_size=[128*2, 128*2, 128*2, 128*2, 128*2])
 
         # Pose feature encoder
-        self.pose_encoder = nn.Sequential(
-            nn.Linear(self._pose_dim, hidden_dim),
-            nn.LayerNorm(hidden_dim),
-            nn.LeakyReLU(0.2),
-            nn.Linear(hidden_dim, hidden_dim)
-        )
+        # self.pose_encoder = nn.Sequential(
+        #     nn.Linear(self._pose_dim, hidden_dim),
+        #     nn.LayerNorm(hidden_dim),
+        #     nn.LeakyReLU(0.2),
+        #     nn.Linear(hidden_dim, hidden_dim)
+        # )
         
         # LBS weights feature encoder
-        self.lbs_encoder = nn.Sequential(
-            nn.Linear(self._lbs_weights_dim, hidden_dim//2),  # 24 is number of joints
-            nn.LayerNorm(hidden_dim//2),
-            nn.LeakyReLU(0.2),
-            nn.Linear(hidden_dim//2, hidden_dim)
-        )
+        # self.lbs_encoder = nn.Sequential(
+        #     nn.Linear(self._lbs_weights_dim, hidden_dim//2),  # 24 is number of joints
+        #     nn.LayerNorm(hidden_dim//2),
+        #     nn.LeakyReLU(0.2),
+        #     nn.Linear(hidden_dim//2, hidden_dim)
+        # )
         
         # Offset and weight correction predictor
         self.offset_predictor = nn.Sequential(

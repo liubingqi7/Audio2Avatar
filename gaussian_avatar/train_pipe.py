@@ -49,14 +49,14 @@ def main():
     
     args = parser.parse_args()
 
-    # dataset = VideoDataset(args)
-    dataset = BaseDataset(
-        dataset_root="/home/liubingqi/work/liubingqi/thuman2.0/view5_train",
-        scene_list=["/home/liubingqi/work/liubingqi/thuman2.0/train.json"],
-        use_smplx=True,
-        smpl_dir="/home/liubingqi/work/liubingqi/THuman/THuman2.0_smpl",
-        n_input_frames=3,
-    )
+    dataset = VideoDataset(args)
+    # dataset = BaseDataset(
+    #     dataset_root="/home/liubingqi/work/liubingqi/thuman2.0/view5_train",
+    #     scene_list=["/home/liubingqi/work/liubingqi/thuman2.0/train.json"],
+    #     use_smplx=True,
+    #     smpl_dir="/home/liubingqi/work/liubingqi/THuman/THuman2.0_smpl",
+    #     n_input_frames=3,
+    # )
 
     dataloader = torch.utils.data.DataLoader(dataset, batch_size=1, collate_fn=collate_fn, shuffle=True)
     print(f"Dataset size: {len(dataset)}")
@@ -109,6 +109,14 @@ def main():
             optimizer.zero_grad()
             losses['total'].backward()
             optimizer.step()
+
+            for name, param in net.named_parameters():
+                if param.requires_grad and param.grad is None:
+                    print(f"Parameter {name} did not receive any gradient!")
+            
+            for name, param in animation_net.named_parameters():
+                if param.requires_grad and param.grad is None:
+                    print(f"Parameter {name} did not receive any gradient!")
             
             total_loss += losses['total'].item()
 

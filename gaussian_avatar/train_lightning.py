@@ -3,6 +3,7 @@ os.environ["WANDB__SERVICE_WAIT"] = "300"
 
 import lightning as L
 from lightning.pytorch.loggers import WandbLogger
+from lightning.pytorch import seed_everything
 from models.lightning_wrapper import GaussianAvatar
 from argparse import ArgumentParser
 import torch
@@ -10,6 +11,8 @@ from torch.utils.data import DataLoader
 from datasets.dataset_video import VideoDataset
 from datasets.dataset_thuman import BaseDataset
 from utils.data_utils import collate_fn
+
+seed_everything(42, workers=True)
 
 def prepare_output_and_logger(args):
     if args.output_dir is not None:
@@ -67,17 +70,23 @@ def main():
     args = setup_parser()
     logger = prepare_output_and_logger(args)
 
-    # dataset = BaseDataset(
-    #     dataset_root="/home/qizhu/Desktop/Work/MotionGeneration/Audio2Avatar/others/LIFe-GoM/data/thuman2.0/view5_train",
-    #     scene_list=["/home/qizhu/Desktop/Work/MotionGeneration/Audio2Avatar/others/LIFe-GoM/data/thuman2.0/test.json"],
-    #     use_smplx=True,
-    #     smpl_dir="/media/qizhu/Expansion/THuman/THuman2.0_smpl/",
-    #     n_input_frames=1,
-    # )
+    dataset = BaseDataset(
+        dataset_root="/home/liubingqi/work/liubingqi/thuman2.0/view5_train",
+        scene_list=["/home/liubingqi/work/liubingqi/thuman2.0/train.json"],
+        use_smplx=True,
+        smpl_dir="/home/liubingqi/work/liubingqi/THuman/THuman2.0_smpl",
+        n_input_frames=3,
+    )
 
-    dataset = VideoDataset(args)
+    # dataset = VideoDataset(args)
 
-    dataloader = DataLoader(dataset, batch_size=1, collate_fn=collate_fn)
+    dataloader = DataLoader(
+        dataset, 
+        batch_size=1, 
+        collate_fn=collate_fn, 
+        shuffle=True,
+        num_workers=89    
+    )
 
     model = GaussianAvatar(args)
     trainer = L.Trainer(
@@ -85,7 +94,8 @@ def main():
         logger=logger,
         callbacks=[],
         accelerator='gpu',
-        devices=1
+        devices=1,
+        strategy='ddp'
     )
 
     trainer.fit(model, dataloader)

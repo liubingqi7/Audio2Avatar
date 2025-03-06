@@ -29,6 +29,10 @@ class GaussianNet(nn.Module):
             model_path=self.args.smplx_model_path,
             # gender=self.args.gender,
             batch_size=1,
+            create_global_orient=False,
+            create_betas=False,
+            create_body_pose=False,
+            create_transl=False,
         ).to(self.args.device)
 
         # subdivide smpl model
@@ -37,7 +41,7 @@ class GaussianNet(nn.Module):
         self.lbs_weights = self.smpl_model.lbs_weights # [N, 24]
         self.parents = self.smpl_model.parents # [24]
         self.posedirs = self.smpl_model.posedirs # [24, 3]
-        self.J_regressor = self.smpl_model.J_regressor # [24, 6890]
+        self.J_regressor = self.smpl_model.J_regressor # [24, 6890]z
         self.v_template = self.smpl_model.v_template # [6890, 3]
         self.shapedirs = self.smpl_model.shapedirs
         self.joints = torch.einsum('bik,ji->bjk', [self.v_template.unsqueeze(0), self.J_regressor]) # [1, 24, 3]
@@ -58,9 +62,9 @@ class GaussianNet(nn.Module):
         for k, v in cam_params.items():
             cam_params[k] = v.to(self.args.device)
 
-        self.init_gaussians(smpl_params)
-
         feats = self.encoder(rgb_images.squeeze(0).permute(0, 3, 1, 2)) # [T, C, H//2, W//2] + [T, C, H//4, W//4] + [T, C, H//8, W//8]
+
+        self.init_gaussians(smpl_params)
 
         self.update_gaussians(feats, smpl_params, cam_params, rgb_images, debug=False)
 
@@ -182,6 +186,10 @@ class AnimationNet(nn.Module):
             model_path=self.args.smplx_model_path,
             # gender=self.args.gender,
             batch_size=1,
+            create_global_orient=False,
+            create_betas=False,
+            create_body_pose=False,
+            create_transl=False,
         ).to(self.args.device)
 
         # subdivide smpl model
@@ -220,7 +228,8 @@ class AnimationNet(nn.Module):
 
         # render gaussian to image
         rendered_image = []
-        for i in range(self.args.clip_length):
+        for i in range(poses.shape[1]):
+            
             rendered_image.append(render_avatars(transformed_gaussians[i], cam_params['intrinsic'][:, i], cam_params['extrinsic'][:, i], self.args, debug=False))
 
         rendered_image = torch.stack(rendered_image)
