@@ -12,6 +12,12 @@ from utils.general_utils import inverse_sigmoid
 from utils.sh_utils import RGB2SH
 import numpy as np
 from models.utils.subdivide_smpl import subdivide_smpl_model
+import nvdiffrast.torch
+import cv2
+
+
+from utils.graphics_utils import clip_T_world
+
 
 class GaussianNet(nn.Module):
     def __init__(self, args):
@@ -41,15 +47,17 @@ class GaussianNet(nn.Module):
         self.lbs_weights = self.smpl_model.lbs_weights # [N, 24]
         self.parents = self.smpl_model.parents # [24]
         self.posedirs = self.smpl_model.posedirs # [24, 3]
-        self.J_regressor = self.smpl_model.J_regressor # [24, 6890]z
+        self.J_regressor = self.smpl_model.J_regressor # [24, 6890]
         self.v_template = self.smpl_model.v_template # [6890, 3]
         self.shapedirs = self.smpl_model.shapedirs
         self.joints = torch.einsum('bik,ji->bjk', [self.v_template.unsqueeze(0), self.J_regressor]) # [1, 24, 3]
-        self.edges = torch.tensor(get_edges_from_faces(self.smpl_model.faces)).to(self.args.device) # [2, 20664]
+        # self.edges = torch.tensor(get_edges_from_faces(self.smpl_model.faces)).to(self.args.device) # [2, 20664]
+        self.faces = self.smpl_model.faces # [20664, 3]
         
         self.gaussians = None
         self.num_gaussians = 0  
-        
+
+        self.rasterize_context = nvdiffrast.torch.RasterizeCudaContext(device='cuda')
 
     def forward(self, x):
         rgb_images = x.video.to(self.args.device)
@@ -115,15 +123,15 @@ class GaussianNet(nn.Module):
             transformed_gaussians = self.gaussians.copy()
             transformed_gaussians['xyz'] = transformed_xyz
             transformed_gaussians['rot'] = transformed_rot
-            projected_gaussians = project_gaussians(transformed_gaussians, cam_params['intrinsic'][:, i, :, :], cam_params['extrinsic'][:, i, :, :])
-
+            projected_gaussians_uv = project_gaussians(transformed_gaussians, cam_params['intrinsic'][:, i, :, :], cam_params['extrinsic'][:, i, :, :])
+            visibility_map = self.visibility_check(transformed_gaussians, cam_params['intrinsic'][:, i, :, :], cam_params['extrinsic'][:, i, :, :])
             # Sample corresponding features from the feature map
-            sampled_feature = sample_multi_scale_feature(feats, projected_gaussians['xyz'], index=i)
+            sampled_feature = sample_multi_scale_feature(feats, projected_gaussians_uv, index=i)
             # print(f"sampled_feature.shape: {sampled_feature.shape}")
             sampled_features.append(sampled_feature)
 
             if debug:
-                draw_gaussians(projected_gaussians, self.args, label=f'projected{i}')
+                draw_gaussians(projected_gaussians_uv, self.args, label=f'projected{i}')
                 # print(f"sampled_features: {sampled_features[...,:3]}")
                 # self.gaussians['color'] = sampled_features.squeeze(0)[...,:3]
 
@@ -176,6 +184,28 @@ class GaussianNet(nn.Module):
         transformed_xyz = transformed_xyz + global_trans
         
         return transformed_xyz, new_quat
+    
+    def visibility_check(self, gaussians, K, E):
+        xyz = gaussians['xyz']
+        resolution = [self.args.image_height, self.args.image_width]
+        visibility_map = xyz.new_zeros(xyz.shape[0], xyz.shape[1])
+
+        with torch.autocast(device_type='cuda', dtype=torch.float16, enabled=False):
+            xyzs_clip = clip_T_world(xyz.permute(0, 2, 1).float(), K.float(), E.float(), resolution[0], resolution[1]).contiguous()
+            outputs, _ = nvdiffrast.torch.rasterize(self.rasterize_context, xyzs_clip, self.faces.type(torch.int32),
+                                                [resolution[0], resolution[1]])
+            triangle_ids = outputs[..., -1].long() - 1
+
+        for i, triangle_id in enumerate(triangle_ids):
+            visible_faces = triangle_id[triangle_id >= 0].unique()
+
+            visible_vertices = self.faces[visible_faces].unique()
+
+            visibility_map[i, visible_vertices] = True
+
+        return visibility_map
+
+        
 
 
 class AnimationNet(nn.Module):
@@ -201,7 +231,7 @@ class AnimationNet(nn.Module):
         self.J_regressor = self.smpl_model.J_regressor # [24, 6890]
         self.v_template = self.smpl_model.v_template # [6890, 3]
         self.joints = torch.einsum('bik,ji->bjk', [self.v_template.unsqueeze(0), self.J_regressor]) # [1, 24, 3]
-        self.edges = torch.tensor(get_edges_from_faces(self.smpl_model.faces)).to(self.args.device) # [2, 20664]
+        # self.edges = torch.tensor(get_edges_from_faces(self.smpl_model.faces)).to(self.args.device) # [2, 20664]
         
         # self.lbs_weights = self.smpl_model.lbs_weights # [N, 24]
         # self.parents = self.smpl_model.parents # [24]
@@ -228,8 +258,7 @@ class AnimationNet(nn.Module):
 
         # render gaussian to image
         rendered_image = []
-        for i in range(poses.shape[1]):
-            
+        for i in range(poses.shape[0]):
             rendered_image.append(render_avatars(transformed_gaussians[i], cam_params['intrinsic'][:, i], cam_params['extrinsic'][:, i], self.args, debug=False))
 
         rendered_image = torch.stack(rendered_image)
@@ -334,7 +363,7 @@ def draw_gaussians(projected_gaussians, args, label='projected'):
     img = torch.zeros((args.image_height, args.image_width, 3), device=args.device)
     
     # 将投影点的坐标四舍五入到最近的整数
-    projected_points = projected_gaussians['xyz'].round().long()
+    projected_points = projected_gaussians.round().long()
     
     # 确保点在图像范围内
     mask = (projected_points[..., 0] >= 0) & (projected_points[..., 0] < args.image_height) & \

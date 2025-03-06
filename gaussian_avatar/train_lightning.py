@@ -90,6 +90,7 @@ def main():
 
     model = GaussianAvatar(args)
     trainer = L.Trainer(
+        default_root_dir=args.ckpt_path,
         max_epochs=args.num_epochs,
         logger=logger,
         callbacks=[],

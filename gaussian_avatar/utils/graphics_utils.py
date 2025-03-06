@@ -266,8 +266,8 @@ def project_gaussians(gaussians, intrinsic, extrinsic):
     projected_xy = projected_xy.transpose(-1, -2)
     projected_gaussians = projected_xy[..., :2] / projected_xy[..., 2:3]
 
-    gaussians['xyz'] = projected_gaussians
-    return gaussians
+    # gaussians['xyz'] = projected_gaussians
+    return projected_gaussians
 
 # def unproject_gaussians(gaussians, intrinsic, extrinsic):
 
@@ -398,3 +398,31 @@ def subdivide(vertices, faces, attributes, return_edges=False):
         return new_vertices, new_faces, new_attributes, edges, index_dict
     else:
         return new_vertices, new_faces, new_attributes, index_dict
+
+
+def clip_T_world(xyzs_world, K, E, H, W):
+    xyzs = torch.cat([xyzs_world, torch.ones_like(xyzs_world[..., 0:1, :])], dim=-2)
+    K_expand = torch.zeros_like(E)
+    fx, fy, cx, cy = K[:, 0, 0], K[:, 1, 1], K[:, 0, 2], K[:, 1, 2]
+    K_expand[:, 0, 0] = 2.0 * fx / W
+    K_expand[:, 1, 1] = 2.0 * fy / H
+    K_expand[:, 0, 2] = 1.0 - 2.0 * cx / W
+    K_expand[:, 1, 2] = 1.0 - 2.0 * cy / H
+    znear, zfar = 1e-3, 1e3
+    K_expand[:, 2, 2] = -(zfar + znear) / (zfar - znear)
+    K_expand[:, 3, 2] = -1.
+    K_expand[:, 2, 3] = -2.0 * zfar * znear / (zfar - znear)
+
+    # gl_transform = torch.tensor([[1., 0, 0, 0],
+    #                              [0, -1., 0, 0],
+    #                              [0, 0, -1., 0],
+    #                              [0, 0, 0, 1.]], device=K.device)
+    # gl_transform = torch.eye(4, dtype=K.dtype, device=K.device)
+    # gl_transform[1, 1] = gl_transform[2, 2] = -1.
+
+    gl_transform = torch.tensor([[1., 0, 0, 0],
+                             [0, -1., 0, 0],
+                             [0, 0, -1., 0],
+                             [0, 0, 0, 1.]], device='cuda')
+    
+    return (K_expand @ gl_transform[None] @ E @ xyzs).permute(0, 2, 1)

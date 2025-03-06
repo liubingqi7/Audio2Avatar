@@ -120,7 +120,7 @@ def _subdivide_smpl_model(smpl=None, smoothing=False, SMPL_PATH=None):
     smpl.v_template = torch.from_numpy(sub_vertices).float().to(device)
     smpl.faces_tensor = torch.from_numpy(sub_faces).long().to(device)
     smpl.J_regressor = torch.from_numpy(J_regressor).float().to(device)
-    smpl.faces = sub_faces     
+    smpl.faces = torch.from_numpy(sub_faces).to(device)     
     smpl.v_id = attr["v_id"].astype(int)
     return smpl    
 
