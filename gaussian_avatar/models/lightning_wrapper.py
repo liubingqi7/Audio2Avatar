@@ -21,13 +21,25 @@ class GaussianAvatar(L.LightningModule):
         
         target_images = batch.video.to(self.device)
 
-        gaussian = self.gaussian_net.forward(batch)
-        rendered_images = self.animation_net.forward(gaussian, batch.smpl_parms, batch.cam_parms).permute(0, 2, 3, 1)
+        gaussian, train_gaussians = self.gaussian_net.forward(batch)
+        
+        # if training, render for all gaussians
+        rendered_images = self.animation_net.forward(train_gaussians, batch.smpl_parms, batch.cam_parms)
+        # rendered_images = self.animation_net.forward(gaussian, batch.smpl_parms, batch.cam_parms).permute(0, 2, 3, 1)
 
         losses = {}
-        losses['l1'] = l1_loss(rendered_images, target_images.squeeze(0)) * 0.8
-        losses['ssim'] = (1.0 - ssim(rendered_images, target_images.squeeze(0))) * 0.2
+        losses['l1'] = 0
+        losses['ssim'] = 0
 
+        for i, images in enumerate(rendered_images):
+            i_weight = 0.8 ** (2 - i - 1) # 2 = num_iters
+            losses['l1'] += i_weight * l1_loss(images.permute(0, 2, 3, 1), target_images.squeeze(0)) * 0.8
+            losses['ssim'] += i_weight * (1.0 - ssim(images.permute(0, 2, 3, 1), target_images.squeeze(0))) * 0.2
+
+            self.log(f'train/l1_{i}', l1_loss(images.permute(0, 2, 3, 1), target_images.squeeze(0)), prog_bar=False)
+            self.log(f'train/ssim_{i}', 1.0 - ssim(images.permute(0, 2, 3, 1), target_images.squeeze(0)), prog_bar=False)
+            self.log(f'train/loss_{i}', l1_loss(images.permute(0, 2, 3, 1), target_images.squeeze(0)) * 0.8 +  (1.0 - ssim(images.permute(0, 2, 3, 1), target_images.squeeze(0))) * 0.2, prog_bar=False)
+        
         losses['total'] = sum([v for k, v in losses.items()])
 
         # 记录每个step的loss
@@ -35,9 +47,11 @@ class GaussianAvatar(L.LightningModule):
         self.log('train/loss', losses['total'], prog_bar=True)
         
         if self.global_step % 1000 == 0:
-            images = torch.cat([rendered_images[0], target_images.squeeze(0)[0]], dim=1)
+            images = target_images.squeeze(0)[0]
+            for i in range(2):
+                images = torch.cat([rendered_images[i].permute(0, 2, 3, 1)[0], images], dim=1)
             self.logger.experiment.log({
-                "train/comparison": wandb.Image(images.detach().cpu().numpy())
+                f"train/comparison": wandb.Image(images.detach().cpu().numpy())
             })
 
         return losses['total']

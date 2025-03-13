@@ -1,5 +1,5 @@
 import torch.nn as nn
-from .blocks import BasicEncoder, UnetExtractor, GaussianUpdater, GaussianUpdater_2, GaussianDeformer
+from .blocks import BasicEncoder, UnetExtractor, GaussianUpdater, GaussianUpdater_2, GaussianDeformer, EncoderLayer
 from smplx import SMPL
 import torch
 from torch.nn import functional as F
@@ -14,6 +14,7 @@ import numpy as np
 from models.utils.subdivide_smpl import subdivide_smpl_model
 import nvdiffrast.torch
 import cv2
+import copy
 
 
 from utils.graphics_utils import clip_T_world
@@ -25,10 +26,12 @@ class GaussianNet(nn.Module):
         self.args = args
         self.encoder = UnetExtractor().to(self.args.device)
         if not self.args.rgb:
-            self.feat_dim = (self.args.sh_degree + 1) ** 2
+            self.color_dim = (self.args.sh_degree + 1) ** 2
         else:
-            self.feat_dim = 1
-        self.gaussian_updater = GaussianUpdater_2(args, input_dim=(288+3)*self.args.clip_length+3+4+self.feat_dim*3+3+1, output_color_dim=self.feat_dim*3).to(self.args.device)
+            self.color_dim = 1
+        self.gaussian_updater = GaussianUpdater_2(args, input_dim=(288+3)*self.args.clip_length+3+4+self.color_dim*3+3+1, output_color_dim=self.color_dim*3).to(self.args.device)
+
+        self.cross_view_attn = EncoderLayer(291, 3, 291, 291)
 
         # SMPL model
         self.smpl_model = SMPL(
@@ -74,9 +77,22 @@ class GaussianNet(nn.Module):
 
         self.init_gaussians(smpl_params)
 
-        self.update_gaussians(feats, smpl_params, cam_params, rgb_images, debug=False)
+        all_gaussians = []
 
-        return self.gaussians
+        for i in range(2):
+            self.update_gaussians(feats, smpl_params, cam_params, rgb_images, debug=False)
+
+            # save gaussians while training
+            tmp_gs = {}
+            for key, value in self.gaussians.items():
+                if isinstance(value, torch.Tensor):
+                    tmp_gs[key] = value.clone()
+                else:
+                    tmp_gs[key] = value 
+
+            all_gaussians.append(tmp_gs)
+
+        return self.gaussians, all_gaussians
 
     def init_gaussians(self, smpl_params):
         # Init gaussians on SMPL vertices
@@ -105,9 +121,11 @@ class GaussianNet(nn.Module):
         self.gaussians = {
             'xyz': v_shaped[0].clone(), # [N, 3]
             'rot': torch.zeros(self.num_gaussians, 4).to(self.args.device), # [N, 4]
-            'color': features.reshape(self.num_gaussians, -1), # [N, feat_dim*3]
+            'color': features.reshape(self.num_gaussians, -1), # [N, color_dim*3]
             'scale': torch.log(torch.ones((self.num_gaussians, 3), device="cuda")), # [N, 3]
-            'opacity': inverse_sigmoid(0.1 * torch.ones(self.num_gaussians, 1).to(self.args.device)) # [N, 1]
+            'opacity': inverse_sigmoid(0.1 * torch.ones(self.num_gaussians, 1).to(self.args.device)), # [N, 1]
+            'feats': torch.zeros((self.num_gaussians, 32), device="cuda"), # [N, feat_dim]
+            'lbs_weights': self.lbs_weights.clone() # [N, 24]
         }
         self.gaussians['rot'][:, 0] = 1
 
@@ -124,10 +142,19 @@ class GaussianNet(nn.Module):
             transformed_gaussians['xyz'] = transformed_xyz
             transformed_gaussians['rot'] = transformed_rot
             projected_gaussians_uv = project_gaussians(transformed_gaussians, cam_params['intrinsic'][:, i, :, :], cam_params['extrinsic'][:, i, :, :])
-            visibility_map = self.visibility_check(transformed_gaussians, cam_params['intrinsic'][:, i, :, :], cam_params['extrinsic'][:, i, :, :])
+            
+            if 0:
+                visibility_map = self.visibility_check(transformed_gaussians, cam_params['intrinsic'][:, i, :, :], cam_params['extrinsic'][:, i, :, :])
+                
+                # soft mask from visibility map
+                epsilon = 1e-3
+                soft_mask = visibility_map.float() * 1.0 + (1 - visibility_map.float()) * epsilon
+
             # Sample corresponding features from the feature map
             sampled_feature = sample_multi_scale_feature(feats, projected_gaussians_uv, index=i)
-            # print(f"sampled_feature.shape: {sampled_feature.shape}")
+
+            if 0:
+                sampled_feature = sampled_feature * soft_mask.unsqueeze(-1)
             sampled_features.append(sampled_feature)
 
             if debug:
@@ -136,10 +163,12 @@ class GaussianNet(nn.Module):
                 # self.gaussians['color'] = sampled_features.squeeze(0)[...,:3]
 
         # Update gaussians
-        sampled_features = torch.cat(sampled_features, dim=-1)
-        # print(f"sampled_features.shape: {sampled_features.shape}")
-        self.gaussians = self.gaussian_updater(self.gaussians, sampled_features.squeeze(0)) # , self.edges)
-        # print(self.gaussians['color'])
+        sampled_features = torch.stack(sampled_features, dim=-2)
+
+        # cross-view attention
+        sampled_features = self.cross_view_attn(sampled_features.squeeze(0), sampled_features.squeeze(0), sampled_features.squeeze(0))
+
+        self.gaussians = self.gaussian_updater(self.gaussians, sampled_features.reshape(self.num_gaussians, -1))
 
     def lbs_transform(self, smpl_params, index=0):
         body_pose = smpl_params['body_pose'][:, index]
@@ -238,31 +267,40 @@ class AnimationNet(nn.Module):
         # self.J_regressor = self.smpl_model.J_regressor # [24, 6890]
         # self.v_template = self.smpl_model.v_template # [6890, 3]
         # self.joints = torch.einsum('bik,ji->bjk', [self.v_template.unsqueeze(0), self.J_regressor]) # [1, 24, 3]
-        self.deformer = GaussianDeformer(self.args)
+        # self.deformer = GaussianDeformer(self.args)
         self.deforme_none = simple_stack
 
-    def forward(self, gaussians, poses, cam_params, is_train=True):
+    def forward(self, gaussianses, poses, cam_params, is_train=True):
+        num_gaussians = len(gaussianses)
+        num_poses = poses['body_pose'].shape[0]
+
+        all_rendered_images = []
+
         body_pose = poses['body_pose']
         global_trans = poses['trans']
         # print(f"body_pose.shape: {body_pose.shape}, global_trans.shape: {global_trans.shape}")
         poses = torch.cat([global_trans, body_pose], dim=-1).squeeze(0)
-        # Deform gaussians
-        deformed_gaussians, lbs_offset = self.deformer(gaussians, poses, self.lbs_weights)
-        # deformed_gaussians, lbs_offset = self.deforme_none(gaussians, poses, self.lbs_weights)
+        
+        for gaussians in gaussianses:         
+            # Deform gaussians
+            # deformed_gaussians, lbs_offset = self.deformer(gaussians, poses, self.lbs_weights)
+            deformed_gaussians, lbs_offset = self.deforme_none(gaussians, poses, self.lbs_weights)
 
-        # Transform gaussians using LBS
-        transformed_gaussians = self.lbs_transform(deformed_gaussians, poses, lbs_offset)
-        # projected_gaussians = project_gaussians(transformed_gaussians['xyz'], cam_params['intrinsic'], cam_params['extrinsic'])
+            # Transform gaussians using LBS
+            transformed_gaussians = self.lbs_transform(deformed_gaussians, poses, lbs_offset)
+            # projected_gaussians = project_gaussians(transformed_gaussians['xyz'], cam_params['intrinsic'], cam_params['extrinsic'])
 
-        # draw_gaussians(projected_gaussians, self.args, label='transformed')
+            # draw_gaussians(projected_gaussians, self.args, label='transformed')
 
-        # render gaussian to image
-        rendered_image = []
-        for i in range(poses.shape[0]):
-            rendered_image.append(render_avatars(transformed_gaussians[i], cam_params['intrinsic'][:, i], cam_params['extrinsic'][:, i], self.args, debug=False))
-
-        rendered_image = torch.stack(rendered_image)
-        return rendered_image
+            # render gaussian to image
+            rendered_image = []
+            for i in range(poses.shape[0]):
+                img = render_avatars(transformed_gaussians[i], cam_params['intrinsic'][:, i], cam_params['extrinsic'][:, i], self.args, debug=False)
+                rendered_image.append(img)
+            
+            rendered_image = torch.stack(rendered_image)
+            all_rendered_images.append(rendered_image)
+        return all_rendered_images
     
     def lbs_transform(self, gaussians, poses, lbs_offset):
         # print(f"poses.shape: {poses.shape}")
@@ -283,7 +321,9 @@ class AnimationNet(nn.Module):
         J_transformed, A = batch_rigid_transform(rot_mats, self.joints.repeat(B, 1, 1), self.parents)
 
         # print(f"lbs_offset.shape: {lbs_offset}")
-        W = self.lbs_weights.unsqueeze(dim=0).expand([B, -1, -1])#  + lbs_offset
+        # W = self.lbs_weights.unsqueeze(dim=0).expand([B, -1, -1])#  + lbs_offset
+        # print(f"gaussians['lbs_weights'].shape: {gaussians['lbs_weights'].shape}")
+        W = gaussians['lbs_weights'] #.unsqueeze(dim=0).expand([B, -1, -1])
         num_joints = self.joints.shape[1]
         T = torch.matmul(W, A.view(B, num_joints, 16)) \
             .view(B, -1, 4, 4)
@@ -348,6 +388,8 @@ def simple_stack(gaussians, poses, lbs_weights):
         deformed_gs['rot'] = gaussians['rot']
         deformed_gs['opacity'] = gaussians['opacity']
         deformed_gs['color'] = gaussians['color']
+        deformed_gs['lbs_weights'] = gaussians['lbs_weights']
+        deformed_gs['feats'] = gaussians['feats']
 
         deformed_gaussians.append(deformed_gs)
 

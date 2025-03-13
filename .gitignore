@@ -29,6 +29,7 @@ output/
 output_2/
 results/
 results*
+ckpt*
 
 # IDE related
 .vscode/

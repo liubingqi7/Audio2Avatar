@@ -190,3 +190,21 @@ def get_edges_from_faces(faces):
 #     transformed_xyz = transformed_xyz + global_trans
     
 #     return transformed_xyz, new_quat
+
+def compute_normalized_lbs(lbs: Tensor, lbs_offset: Tensor) -> Tensor:
+    """
+    Compute normalized LBS weights w_k
+
+    Args:
+        lbs: LBS weights matrix of shape (N, 24)
+        lbs_offset: LBS offset matrix of shape (N, 24)
+    Returns:
+        Normalized LBS weights matrix of shape (N, 24)
+    """
+    eps = 1e-8
+    
+    unnormalized_w = torch.exp(torch.log(lbs + eps) + lbs_offset)
+    
+    normalized_w = unnormalized_w / torch.sum(unnormalized_w, dim=1, keepdim=True)
+    
+    return normalized_w

@@ -128,6 +128,10 @@ def render_avatars(gaussians, K, E, args, bg_color=None, debug=False):
 
     rasterizer = GaussianRasterizer(raster_settings=raster_settings)
 
+    # test
+    # colors_precomp = torch.cat([colors_precomp, torch.ones_like(colors_precomp[:, 0:1])], dim=-1)
+    # print(colors_precomp.shape)
+
     rendered_image, radii, inv_depth = rasterizer(
     # rendered_image, radii = rasterizer(
         means3D = xyzs,
@@ -144,7 +148,7 @@ def render_avatars(gaussians, K, E, args, bg_color=None, debug=False):
 
     rendered_image = rendered_image.clamp(0, 1)
     
-    return rendered_image
+    return rendered_image# [:-1, ...], rendered_image[-1, ...]
 
 
 def render(viewpoint_camera, pc : Union[GaussianModel, SMPLGaussianModel], pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None):

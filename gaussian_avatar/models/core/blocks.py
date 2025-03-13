@@ -11,6 +11,7 @@ from models.utils.transform_utils import remove_outliers, MinMaxScaler
 from models.core.pointtransformer_v3 import PointTransformerV3
 from models.core.DGCNN import DGCNN, ShallowEdgeConv
 from pytorch3d.transforms import quaternion_multiply
+from models.utils.lbs_utils import compute_normalized_lbs
 
 
 # From PyTorch internals
@@ -549,67 +550,79 @@ class GaussianUpdater_2(nn.Module):
     Output:
         gaussians: dict, updated gaussian parameters
     '''
-    def __init__(self, args, input_dim=291+3+3+4+1*3+1, hidden_dim=128, output_color_dim=3, feat_dim=14):
+    def __init__(self, args, input_dim=291+3+3+4+1*3+1, hidden_dim=128, output_color_dim=3, feat_dim=32):
         super(GaussianUpdater_2, self).__init__()
         self.args = args
-        self.feat_encoder = PointTransformerV3(input_dim, enable_flash=True)
-        # self.feat_encoder = PointTransformerV3(input_dim, enable_flash=False, dec_patch_size=[128*2, 128*2, 128*2, 128*2], enc_patch_size=[128*2, 128*2, 128*2, 128*2, 128*2])
+        self.point_transformer = PointTransformerV3(input_dim, enable_flash=True)
+        self.feat_encoder = nn.Sequential(
+            nn.Linear(64, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, feat_dim)
+        )
+        self.lbs_offset_predictor = nn.Sequential(
+            nn.Linear(input_dim+64, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, 24)
+        )
         self.delta_predictor = GaussianParamPredictor(input_dim+64, hidden_dim, output_color_dim)
         self.grid_resolution = 100
 
     def forward(self, gaussians, feats_image):
         # 1. normalize gaussian position to [-1, 1]
         gaussians = [gaussians]
-        # normalized_gs, scalers = self.normalized_gs(gaussians)
+        normalized_gs, scalers = self.normalized_gs(gaussians)
         offset = torch.tensor([gs['xyz'].shape[0] for gs in gaussians]).cumsum(0)
 
         feat = []
         
-        # for gs in normalized_gs:
-        for gs in gaussians:
+        for gs in normalized_gs:
             feat_list = []
             for key in gs.keys():
                 if key=='xyz':
                     feat_list.append(gs[key])
                 elif key == 'color':
                     feat_list.append(gs[key].view(gs[key].shape[0], -1))
-                else:
+                elif key in ['opacity', 'scale', 'rot']:
                     feat_list.append(gs[key])
             feat.append(torch.cat(feat_list, dim=1)) #N, D
         feat = torch.cat(feat, dim=0) #Bx-N, D
         feat = torch.cat([feat, feats_image], dim=1)
         model_input = {
-            # 'coord': torch.cat([gs['xyz'] for gs in normalized_gs], dim=0),
-            'coord': torch.cat([gs['xyz'] for gs in gaussians], dim=0),
+            'coord': torch.cat([gs['xyz'] for gs in normalized_gs], dim=0),
             'grid_size': torch.ones([3])*1.0/self.grid_resolution,
             'offset': offset.to(self.args.device),
             'feat': feat,
         }
-        model_input['grid_coord'] = torch.floor(model_input['coord']*self.grid_resolution).int() #[0~1]/grid_resolution -> int
+        model_input['grid_coord'] = torch.floor(model_input['coord']*self.grid_resolution).int()
 
-        # print(model_input['coord'].shape, model_input['grid_coord'].shape, model_input['offset'].shape, model_input['feat'].shape)
         # 2. predict delta parameters
-        feat_delta = self.feat_encoder(model_input)['feat']
+        feat_delta = self.point_transformer(model_input)['feat']
+        gaussian_feat = self.feat_encoder(feat_delta)
+
         feat_delta = torch.cat([feat_delta, feat], dim=1)
         delta_params = self.delta_predictor(feat_delta)
 
-        # print(gaussians[0].keys())
         # 3. update gaussian parameters and unnormalize
-        # for gs in normalized_gs:
-        for gs in gaussians:
+        for gs in normalized_gs:
+            for k in gaussians[0].keys():
+                if k not in gs:
+                    gs[k] = gaussians[0][k]
+            
             for k, v in gs.items():
-                # print(f"k: {k}, v.range: {delta_params[k].min().item()}, {delta_params[k].max().item()}")
                 if k == 'color':
-                    gs[k] = gs[k] + delta_params[k]
+                    gs[k] = delta_params[k]
                 elif k == 'rot':
                     delta_params[k] = delta_params[k] / (delta_params[k].norm(dim=-1, keepdim=True) + 1e-8)
                     gs[k] = quaternion_multiply(gs[k], delta_params[k])
-                else:
+                elif k == 'feats':
+                    gs[k] = gaussian_feat
+                elif k == 'lbs_weights':
+                    lbs_offset = self.lbs_offset_predictor(feat_delta)
+                    gs[k] = compute_normalized_lbs(gs[k], lbs_offset)
+                elif k in ['xyz', 'scale', 'opacity']:
                     gs[k] = gs[k] + delta_params[k]
 
-        # unnormalized_gs = self.unnormalized_gs(normalized_gs, scalers)
-        unnormalized_gs = gaussians
-
+        unnormalized_gs = self.unnormalized_gs(normalized_gs, scalers)
         return unnormalized_gs[0]
 
     def normalized_gs(self, batch_gs):
@@ -621,52 +634,86 @@ class GaussianUpdater_2(nn.Module):
             scaler.fit_transform(gs['xyz'])
             normalized_gs['xyz'] = scaler.transform(gs['xyz']) 
             normalized_gs['scale'] = gs['scale'] + torch.log(scaler.scale_)
-            # print(f"scaler.scale_: {scaler.scale_}")
             normalized_gs['color'] = gs['color']
             normalized_gs['opacity'] = gs['opacity']
             normalized_gs['rot'] = gs['rot']
+            if 'lbs_weights' in gs:
+                normalized_gs['lbs_weights'] = gs['lbs_weights']
+            if 'feats' in gs:
+                normalized_gs['feats'] = gs['feats']
             scalers.append(scaler)
             batch_normalized_gs.append(normalized_gs)
         return batch_normalized_gs, scalers
 
-    def unnormalized_gs(self, batch_gs, scalers): #TODO
+    def unnormalized_gs(self, batch_gs, scalers):
         batch_unnormalized_gs = []
         for gs, scaler in zip(batch_gs, scalers):
             unnormalized_gs = {}
-            for key in gs:
-                if key=='xyz': #The predicted gs may not contain means
-                    unnormalized_gs['xyz'] = scaler.inverse_transform(gs['xyz'])
-                elif key=='scale':
-                    unnormalized_gs['scale'] = gs['scale'] - torch.log(scaler.scale_)
-                else:
-                    unnormalized_gs[key] = gs[key]
+            for k in gs.keys():
+                unnormalized_gs[k] = gs[k]
+            
+            unnormalized_gs['xyz'] = scaler.inverse_transform(gs['xyz'])
+            unnormalized_gs['scale'] = gs['scale'] - torch.log(scaler.scale_)
+            
             batch_unnormalized_gs.append(unnormalized_gs)
-        return  batch_unnormalized_gs
+        return batch_unnormalized_gs
 
 
 class GaussianDeformer(nn.Module):
-    def __init__(self, args, color_dim=3, hidden_dim=64):
+    def __init__(self, args, color_dim=3, hidden_dim=64, feat_dim=32):
         super(GaussianDeformer, self).__init__()
         self.args = args
         self.color_dim = color_dim
         self._gaussian_dim = self.color_dim + 3 + 3 + 4 + 1  # xyz + scale + rot + opacity
-        self._pose_dim = 75
+        self._pose_dim = 75 # transl + global rot + local rot from smpl
         self._lbs_weights_dim = 24
         # self.hidden_dim = hidden_dim
         # self.hidden_dim = 64
         
         # Dynamic graph feature extractor
         # self.graph_encoder = ShallowEdgeConv(args, in_channels=(self._gaussian_dim+self._lbs_weights_dim+self._pose_dim) * 2, out_channels=hidden_dim)
-        self.grid_resolution = 100
-        self.graph_encoder = PointTransformerV3(in_channels=(self._gaussian_dim+self._lbs_weights_dim+self._pose_dim), enable_flash=True, dec_patch_size=[128*2, 128*2, 128*2, 128*2], enc_patch_size=[128*2, 128*2, 128*2, 128*2, 128*2])
+        if 0:
+            self.grid_resolution = 100
+            self.graph_encoder = PointTransformerV3(in_channels=(self._gaussian_dim+self._lbs_weights_dim+self._pose_dim), enable_flash=True, dec_patch_size=[128*2, 128*2, 128*2, 128*2], enc_patch_size=[128*2, 128*2, 128*2, 128*2, 128*2])
 
         # Pose feature encoder
-        # self.pose_encoder = nn.Sequential(
-        #     nn.Linear(self._pose_dim, hidden_dim),
-        #     nn.LayerNorm(hidden_dim),
-        #     nn.LeakyReLU(0.2),
-        #     nn.Linear(hidden_dim, hidden_dim)
-        # )
+        self.pose_encoder = nn.Sequential(
+            nn.Linear(self._pose_dim, hidden_dim),
+            nn.LayerNorm(hidden_dim),
+            nn.LeakyReLU(0.2),
+            nn.Linear(hidden_dim, hidden_dim)
+        )
+
+        # gaussian attributes feature encoder
+        self.gaussian_attr_encoder = nn.Sequential(
+            nn.Linear(self._gaussian_dim, hidden_dim),
+            nn.LayerNorm(hidden_dim),
+            nn.LeakyReLU(0.2),
+            nn.Linear(hidden_dim, hidden_dim)
+        )
+        
+        # Transformation encoder (calculated transformation matrix from lbs weights)
+        # Input shape: [B, N, 4, 4] -> se3 parameters 
+        self.transformation_encoder = nn.Sequential(
+            nn.Linear(6, hidden_dim),
+            nn.LayerNorm(hidden_dim),
+            nn.LeakyReLU(0.2),
+            nn.Linear(hidden_dim, hidden_dim)
+        )
+
+        # feat decoder
+        self.feat_decoder = nn.Sequential(
+            nn.Linear(feat_dim, hidden_dim),
+            nn.LayerNorm(hidden_dim),
+            nn.LeakyReLU(0.2),
+            nn.Linear(hidden_dim, hidden_dim)
+        )
+
+        # GauMamba from STC-GS
+        
+        # Gaussian Deform Decoder, input (pose_emb, trans_emb, gs_attr_emb, feat_emb), output (se3, scale, rot, opacity, color)
+        # self.
+        
         
         # LBS weights feature encoder
         # self.lbs_encoder = nn.Sequential(
@@ -676,27 +723,26 @@ class GaussianDeformer(nn.Module):
         #     nn.Linear(hidden_dim//2, hidden_dim)
         # )
         
-        # Offset and weight correction predictor
-        self.offset_predictor = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim),  # 3 hidden_dims from graph, pose and lbs features
-            nn.LayerNorm(hidden_dim),
-            nn.LeakyReLU(0.2),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.LayerNorm(hidden_dim),
-            nn.LeakyReLU(0.2),
-            nn.Linear(hidden_dim, self._gaussian_dim + self._lbs_weights_dim)  # 3D xyz offset + 24D lbs weight correction
-        )
 
-    def forward(self, gaussians, pose, lbs_weights):
-        # Input:
-        #   gaussians: single gaussian dict with keys ['xyz', 'scale', 'rot', 'opacity', 'color']
-        #   pose: [B, pose_dim] multiple poses
-        #   lbs_weights: [N, 24] single lbs weight matrix for all points
-        # Output:
-        #   deformed_gaussians: list of B gaussian dicts, each with same keys as input
-        #   all_lbs_offsets: [B, N, 24] lbs weight corrections for each pose
-
-        # print(f"pose.shape: {pose.shape}")
+    def forward(self, gaussians, pose):
+        """
+        Forward pass of GaussianDeformer.
+        
+        Args:
+            gaussians (dict): Single gaussian dictionary containing:
+                - xyz (tensor): 3D positions
+                - scale (tensor): Scale parameters  
+                - rot (tensor): Rotation parameters
+                - opacity (tensor): Opacity values
+                - color (tensor): Color values
+                - feats (tensor): Feature vectors
+                - lbs_weights (tensor): Linear blend skinning weights
+            pose (tensor): Pose parameters of shape [B, pose_dim]
+            
+        Returns:
+            list[dict]: List of B deformed gaussian dictionaries, each containing
+                the same keys as the input gaussian dictionary
+        """
 
         B = pose.shape[0]
         N = gaussians['xyz'].shape[0]
@@ -778,3 +824,75 @@ class GaussianDeformer(nn.Module):
         return combined_deformed_gs, all_lbs_offsets
 
 
+
+
+# Life-Gom
+import math
+
+class MultiHeadAttention(nn.Module):
+    def __init__(self, d_model, num_heads):
+        super(MultiHeadAttention, self).__init__()
+        assert d_model % num_heads == 0, "d_model must be divisible by num_heads"
+
+        self.d_model = d_model
+        self.num_heads = num_heads
+        self.d_k = d_model // num_heads
+
+        self.W_q = nn.Linear(d_model, d_model)
+        self.W_k = nn.Linear(d_model, d_model)
+        self.W_v = nn.Linear(d_model, d_model)
+        self.W_o = nn.Linear(d_model, d_model)
+
+    def scaled_dot_product_attention(self, Q, K, V, mask=None):
+        attn_scores = torch.matmul(Q, K.transpose(-2, -1)) / math.sqrt(self.d_k)
+        if mask is not None:
+            mask = mask[:, None].repeat(1, self.num_heads, 1, 1)
+            attn_scores = attn_scores.masked_fill(mask == 0, -1e9)
+        attn_probs = torch.softmax(attn_scores, dim=-1)
+        output = torch.matmul(attn_probs, V)
+        return output
+
+    def split_heads(self, x):
+        batch_size, seq_length, d_model = x.size()
+        return x.view(batch_size, seq_length, self.num_heads, self.d_k).transpose(1, 2)
+
+    def combine_heads(self, x):
+        batch_size, _, seq_length, d_k = x.size()
+        return x.transpose(1, 2).contiguous().view(batch_size, seq_length, self.d_model)
+
+    def forward(self, Q, K, V, mask=None):
+        Q = self.split_heads(self.W_q(Q))
+        K = self.split_heads(self.W_k(K))
+        V = self.split_heads(self.W_v(V))
+
+        attn_output = self.scaled_dot_product_attention(Q, K, V, mask)
+        output = self.W_o(self.combine_heads(attn_output))
+        return output
+
+
+class PositionWiseFeedForward(nn.Module):
+    def __init__(self, d_model, d_ff, d_out):
+        super(PositionWiseFeedForward, self).__init__()
+        self.fc1 = nn.Linear(d_model, d_ff)
+        self.fc2 = nn.Linear(d_ff, d_out)
+        self.relu = nn.ReLU()
+
+    def forward(self, x):
+        return self.fc2(self.relu(self.fc1(x)))
+
+
+class EncoderLayer(nn.Module):
+    def __init__(self, d_model, num_heads, d_ff, d_out, dropout=0.1):
+        super(EncoderLayer, self).__init__()
+        self.self_attn = MultiHeadAttention(d_model, num_heads)
+        self.feed_forward = PositionWiseFeedForward(d_model, d_ff, d_out)
+        self.norm1 = nn.LayerNorm(d_model)
+        self.norm2 = nn.LayerNorm(d_out)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, Q, K, V, mask=None):
+        attn_output = self.self_attn(Q, K, V, mask)
+        x = self.norm1(Q + self.dropout(attn_output))
+        ff_output = self.feed_forward(x)
+        x = self.norm2(x + self.dropout(ff_output))
+        return x

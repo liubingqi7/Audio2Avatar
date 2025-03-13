@@ -11,6 +11,7 @@ from torch.utils.data import DataLoader
 from datasets.dataset_video import VideoDataset
 from datasets.dataset_thuman import BaseDataset
 from utils.data_utils import collate_fn
+from lightning.pytorch.callbacks import ModelCheckpoint
 
 seed_everything(42, workers=True)
 
@@ -88,15 +89,26 @@ def main():
         num_workers=89    
     )
 
+    checkpoint_callback = ModelCheckpoint(
+        dirpath=os.path.join(args.output_dir, 'checkpoints'),
+        filename='{epoch}-{train_loss:.2f}',
+        save_top_k=3,
+        monitor='train/loss_1',
+        mode='min',
+        save_last=True,
+    )
+
     model = GaussianAvatar(args)
     trainer = L.Trainer(
         default_root_dir=args.ckpt_path,
         max_epochs=args.num_epochs,
         logger=logger,
-        callbacks=[],
+        callbacks=[checkpoint_callback],
         accelerator='gpu',
         devices=1,
-        strategy='ddp'
+        # strategy='ddp',
+        gradient_clip_algorithm='norm',
+        gradient_clip_val=1.0,
     )
 
     trainer.fit(model, dataloader)
