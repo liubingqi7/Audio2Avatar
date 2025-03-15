@@ -132,13 +132,36 @@ def sample_features5d(input, coords):
         B, feats.shape[2], feats.shape[3], feats.shape[1]
     )  # B C R1 R2 1 -> B R1 R2 C
 
-def sample_multi_scale_feature(feats, projected_gaussians, index=0):
+def sample_multi_scale_feature(feats, projected_gaussians):
+    '''
+    Sample multi-scale features according to projected gaussians
+    feats: [B*T, 3, H, W] + [B*T, C, H//2, W//2] + [B*T, C, H//4, W//4] + [B*T, C, H//8, W//8]
+    projected_gaussians: [B*T, N, 2], already normalized to [-1, 1]
+    return: [B*T, N, C]
+    '''
     sampled_features = []
     scales = [1, 2, 4, 8]
+
     for feat, scale in zip(feats, scales):
-        rescaled_gaussians = projected_gaussians / scale
-        sampled_features.append(sample_features4d(feat[index:index+1], rescaled_gaussians))
+        sampled_features.append(F.grid_sample(feat, projected_gaussians.unsqueeze(1), align_corners=False, padding_mode="border").squeeze(2))
+    sampled_features = torch.cat(sampled_features, dim=-2)
 
-    sampled_features = torch.cat(sampled_features, dim=2)
+    return sampled_features.permute(0, 2, 1)
 
-    return sampled_features
+
+# def sample_multi_scale_feature(feats, projected_gaussians):
+#     '''
+#     Sample multi-scale features according to projected gaussians
+#     feats: [B*T, 3, H, W] + [B*T, C, H//2, W//2] + [B*T, C, H//4, W//4] + [B*T, C, H//8, W//8]
+#     projected_gaussians: [B*T, N, 2], already normalized to [-1, 1]
+#     return: [B*T, N, C]
+#     '''
+#     sampled_features = []
+#     scales = [1, 2, 4, 8]
+#     for feat, scale in zip(feats, scales):
+#         rescaled_gaussians = projected_gaussians / scale
+#         sampled_features.append(sample_features4d(feat.reshape(B*T, -1, H, W), rescaled_gaussians))
+
+#     sampled_features = torch.cat(sampled_features, dim=2)
+
+#     return sampled_features

@@ -568,10 +568,12 @@ class GaussianUpdater_2(nn.Module):
         self.grid_resolution = 100
 
     def forward(self, gaussians, feats_image):
+        B, N, _ = gaussians['xyz'].shape
         # 1. normalize gaussian position to [-1, 1]
         gaussians = [gaussians]
         normalized_gs, scalers = self.normalized_gs(gaussians)
-        offset = torch.tensor([gs['xyz'].shape[0] for gs in gaussians]).cumsum(0)
+        gs = normalized_gs[0]
+        offset = torch.tensor([gs['xyz'][b].shape[0] for b in range(B)]).cumsum(0)
 
         feat = []
         
@@ -581,27 +583,31 @@ class GaussianUpdater_2(nn.Module):
                 if key=='xyz':
                     feat_list.append(gs[key])
                 elif key == 'color':
-                    feat_list.append(gs[key].view(gs[key].shape[0], -1))
+                    feat_list.append(gs[key])
                 elif key in ['opacity', 'scale', 'rot']:
                     feat_list.append(gs[key])
-            feat.append(torch.cat(feat_list, dim=1)) #N, D
+            feat.append(torch.cat(feat_list, dim=-1)) #N, D
         feat = torch.cat(feat, dim=0) #Bx-N, D
-        feat = torch.cat([feat, feats_image], dim=1)
+        feat = torch.cat([feat, feats_image], dim=-1)
         model_input = {
-            'coord': torch.cat([gs['xyz'] for gs in normalized_gs], dim=0),
+            'coord': torch.cat([gs['xyz'] for gs in normalized_gs], dim=0).reshape(-1, 3),
             'grid_size': torch.ones([3])*1.0/self.grid_resolution,
             'offset': offset.to(self.args.device),
-            'feat': feat,
+            'feat': feat.reshape(-1, feat.shape[-1]),
         }
         model_input['grid_coord'] = torch.floor(model_input['coord']*self.grid_resolution).int()
 
         # 2. predict delta parameters
         feat_delta = self.point_transformer(model_input)['feat']
+        
         gaussian_feat = self.feat_encoder(feat_delta)
 
-        feat_delta = torch.cat([feat_delta, feat], dim=1)
+        feat_delta = torch.cat([feat_delta, feat.reshape(B*N, -1)], dim=1)
         delta_params = self.delta_predictor(feat_delta)
 
+        for k in delta_params.keys():
+            delta_params[k] = delta_params[k].reshape(B, N, -1)
+            
         # 3. update gaussian parameters and unnormalize
         for gs in normalized_gs:
             for k in gaussians[0].keys():
@@ -617,7 +623,7 @@ class GaussianUpdater_2(nn.Module):
                 elif k == 'feats':
                     gs[k] = gaussian_feat
                 elif k == 'lbs_weights':
-                    lbs_offset = self.lbs_offset_predictor(feat_delta)
+                    lbs_offset = self.lbs_offset_predictor(feat_delta).reshape(B, N, 24)
                     gs[k] = compute_normalized_lbs(gs[k], lbs_offset)
                 elif k in ['xyz', 'scale', 'opacity']:
                     gs[k] = gs[k] + delta_params[k]
@@ -630,32 +636,56 @@ class GaussianUpdater_2(nn.Module):
         batch_normalized_gs = []
         for gs in batch_gs:
             normalized_gs = {}
-            scaler = MinMaxScaler()
-            scaler.fit_transform(gs['xyz'])
-            normalized_gs['xyz'] = scaler.transform(gs['xyz']) 
-            normalized_gs['scale'] = gs['scale'] + torch.log(scaler.scale_)
+            B = gs['xyz'].shape[0]
+            
+            batch_scalers = []
+            batch_normalized_xyz = []
+            for b in range(B):
+                scaler = MinMaxScaler()
+                normalized_xyz = scaler.fit_transform(gs['xyz'][b]) # N,3
+                batch_scalers.append(scaler)
+                batch_normalized_xyz.append(normalized_xyz)
+            
+            normalized_gs['xyz'] = torch.stack(batch_normalized_xyz, dim=0)
+            scale_offset = torch.stack([torch.log(s.scale_) for s in batch_scalers], dim=0)
+            normalized_gs['scale'] = gs['scale'] + scale_offset.unsqueeze(-1).unsqueeze(-1)
             normalized_gs['color'] = gs['color']
-            normalized_gs['opacity'] = gs['opacity']
+            normalized_gs['opacity'] = gs['opacity'] 
             normalized_gs['rot'] = gs['rot']
             if 'lbs_weights' in gs:
                 normalized_gs['lbs_weights'] = gs['lbs_weights']
             if 'feats' in gs:
                 normalized_gs['feats'] = gs['feats']
-            scalers.append(scaler)
+                
+            scalers.append(batch_scalers)
             batch_normalized_gs.append(normalized_gs)
+            
         return batch_normalized_gs, scalers
 
     def unnormalized_gs(self, batch_gs, scalers):
         batch_unnormalized_gs = []
-        for gs, scaler in zip(batch_gs, scalers):
+        for gs, batch_scalers in zip(batch_gs, scalers):
             unnormalized_gs = {}
-            for k in gs.keys():
-                unnormalized_gs[k] = gs[k]
+            B = gs['xyz'].shape[0]
             
-            unnormalized_gs['xyz'] = scaler.inverse_transform(gs['xyz'])
-            unnormalized_gs['scale'] = gs['scale'] - torch.log(scaler.scale_)
+            batch_unnormalized_xyz = []
+            for b in range(B):
+                unnormalized_xyz = batch_scalers[b].inverse_transform(gs['xyz'][b])
+                batch_unnormalized_xyz.append(unnormalized_xyz)
+            
+            unnormalized_gs['xyz'] = torch.stack(batch_unnormalized_xyz, dim=0)
+            scale_offset = torch.stack([torch.log(s.scale_) for s in batch_scalers], dim=0)
+            unnormalized_gs['scale'] = gs['scale'] - scale_offset.unsqueeze(-1).unsqueeze(-1)
+            unnormalized_gs['color'] = gs['color']
+            unnormalized_gs['opacity'] = gs['opacity']
+            unnormalized_gs['rot'] = gs['rot']
+            if 'lbs_weights' in gs:
+                unnormalized_gs['lbs_weights'] = gs['lbs_weights']
+            if 'feats' in gs:
+                unnormalized_gs['feats'] = gs['feats']
             
             batch_unnormalized_gs.append(unnormalized_gs)
+            
         return batch_unnormalized_gs
 
 

@@ -1,4 +1,4 @@
-export CUDA_VISIBLE_DEVICES=3
+export CUDA_VISIBLE_DEVICES=1
 # python train_pipe.py --num_epochs 101 --rgb \
 #     --clip_length 4 \
 #     --smplx_model_path /home/liubingqi/work/liubingqi/SMPL_SMPLX/SMPL_models/smpl/SMPL_NEUTRAL.pkl \
@@ -14,10 +14,12 @@ export CUDA_VISIBLE_DEVICES=3
 python train_lightning.py --num_epochs 50 --rgb \
     --clip_length 4 \
     --smplx_model_path /home/liubingqi/work/liubingqi/SMPL_SMPLX/SMPL_models/smpl/SMPL_NEUTRAL.pkl \
-    --output_dir results_3_12_thuman_iter_2_add_feat \
-    --ckpt_path ckpts_3_12_thuman_iter_2_add_feat \
+    --output_dir results_315_iter2_fix_lr_scheduler \
+    --ckpt_path ckpts_315_iter2_fix_lr_scheduler \
     --image_height 1024 \
     --image_width 1024 \
+    --experiment_name 315_iter2_fix_lr_scheduler \
+    --num_iters 2 \
+    --batch_size 1 \
     --use_wandb \
-    --experiment_name 3_12_thuman_iter_2_add_feat \
     # # --use_ckpt \

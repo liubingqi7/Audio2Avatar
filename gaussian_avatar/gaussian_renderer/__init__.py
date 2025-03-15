@@ -20,14 +20,55 @@ from utils.graphics_utils import getWorld2View2_torch, getProjectionMatrix_torch
 SCALE_BIAS = 3.9
 OPACITY_BIAS = 0.0
 
-def render_avatars(gaussians, K, E, args, bg_color=None, debug=False):
+def render_batch(gaussians, K, E, args, bg_color=None, debug=False):
+    '''
+    Batch rendering for gaussian avatar
+    Args:
+        gaussians: dict containing gaussian parameters with batch dimension
+        K: intrinsic matrix [B, T, 3, 3]
+        E: extrinsic matrix [B, T, 4, 4] 
+        args: configuration arguments
+        bg_color: background color, default white
+        debug: whether to print debug info
+    Returns:
+        rendered: rendered images [B*T, H, W, 3]
+    '''
+    B, T = E.shape[0], E.shape[1]
+    
+    # Flatten batch and time dimensions
+    E_flat = E.reshape(-1, 4, 4)
+    K_flat = K.reshape(-1, 3, 3)
+
+    # Split gaussians into different dict
+    xyzs = gaussians['xyz'].reshape(B*T, -1, 3)
+    rots = gaussians['rot'].reshape(B*T, -1, 4)
+    scales = gaussians['scale'].reshape(B*T, -1, 3)
+    opacities = gaussians['opacity'].reshape(B*T, -1, 1)
+    colors = gaussians['color'].reshape(B*T, -1, 3)
+
+    # Render using base function
+    rendered_images = []
+    for i in range(B*T):
+        rendered = render_one(xyzs[i], rots[i], scales[i], opacities[i], colors[i], K_flat[i], E_flat[i], args, bg_color, debug)
+        rendered_images.append(rendered.permute(1, 2, 0))
+    
+    return torch.stack(rendered_images).reshape(B, T, args.image_height, args.image_width, 3)
+
+
+def render_one(xyzs, rots, scales, opacities, colors, K, E, args, bg_color=None, debug=False):
     '''
     Customized render for gaussian avatar
     '''
+    
+    # print(f"xyzs.shape: {xyzs.shape}")
+    # print(f"rots.shape: {rots.shape}")
+    # print(f"scales.shape: {scales.shape}")
+    # print(f"opacities.shape: {opacities.shape}")
+    # print(f"colors.shape: {colors.shape}")
 
     # calculate needed camera parameters
-    extrinsics = E[0]
-    intrinsics = K[0]
+    extrinsics = E
+    intrinsics = K
     # print(extrinsics.shape)
     # print(intrinsics.shape)
 
@@ -51,7 +92,6 @@ def render_avatars(gaussians, K, E, args, bg_color=None, debug=False):
 
     world_view_transform = getWorld2View2_torch(R, T).transpose(0, 1)
     projection_matrix = getProjectionMatrix_torch(znear=znear, zfar=zfar, fovX=FovX, fovY=FovY).transpose(0,1)
-    # print(projection_matrix.device, world_view_transform.device)
     full_proj_transform = (world_view_transform.unsqueeze(0).bmm(projection_matrix.unsqueeze(0))).squeeze(0)
     camera_center = world_view_transform.inverse()[3, :3]
 
@@ -86,25 +126,22 @@ def render_avatars(gaussians, K, E, args, bg_color=None, debug=False):
         antialiasing=True,
     )
 
-    N = gaussians['xyz'].shape[0]
-    xyzs = gaussians['xyz']
-    rots = gaussians['rot']
-    scales = torch.min(torch.exp(gaussians['scale']-SCALE_BIAS), torch.tensor(0.1, device=gaussians['scale'].device))
-    opacities = torch.sigmoid(gaussians['opacity']-OPACITY_BIAS)
+    scales = torch.min(torch.exp(scales-SCALE_BIAS), torch.tensor(0.1, device=scales.device))
+    opacities = torch.sigmoid(opacities-OPACITY_BIAS)
 
     # print(f"scale range: {scales.min().item()}, {scales.max().item()}")
     # print(f"opacity range: {opacities.min().item()}, {opacities.max().item()}")
    
-    colors = None
+    # colors = None
     colors_precomp = None
     if not args.rgb:
-        shs_view = gaussians['color'].reshape(N, -1, 3).transpose(1, 2)
-        dir_pp = (xyzs - camera_center.repeat(N, 1))
+        shs_view = colors.reshape(xyzs.shape[0], -1, 3).transpose(1, 2)
+        dir_pp = (xyzs - camera_center.repeat(xyzs.shape[0], 1))
         dir_pp_normalized = dir_pp/dir_pp.norm(dim=1, keepdim=True)
         sh2rgb = eval_sh(args.sh_degree, shs_view, dir_pp_normalized)
         colors_precomp = torch.clamp_min(sh2rgb + 0.5, 0.0)
     else:
-        colors_precomp = torch.clamp(gaussians['color'], 0.0, 1.0)
+        colors_precomp = torch.clamp(colors, 0.0, 1.0)
         # print(f"colors_precomp.max(): {colors_precomp.max()}")
         # print(f"colors_precomp.min(): {colors_precomp.min()}")
 
@@ -136,7 +173,7 @@ def render_avatars(gaussians, K, E, args, bg_color=None, debug=False):
     # rendered_image, radii = rasterizer(
         means3D = xyzs,
         means2D = screenspace_points,
-        shs = colors,
+        shs = None,
         colors_precomp = colors_precomp,
         opacities = opacities,
         scales = scales,
@@ -148,7 +185,7 @@ def render_avatars(gaussians, K, E, args, bg_color=None, debug=False):
 
     rendered_image = rendered_image.clamp(0, 1)
     
-    return rendered_image# [:-1, ...], rendered_image[-1, ...]
+    return rendered_image # [:-1, ...], rendered_image[-1, ...]
 
 
 def render(viewpoint_camera, pc : Union[GaussianModel, SMPLGaussianModel], pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None):

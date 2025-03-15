@@ -62,6 +62,11 @@ def setup_parser():
     parser.add_argument('--experiment_name', type=str, default='test_lightning',
                     help='Name of the experiment')
     parser.add_argument('--use_wandb', action='store_true', help='Whether to use wandb')
+    parser.add_argument('--num_iters', type=int, default=2,
+                        help='Number of iterations for training the gaussian net.')
+    parser.add_argument('--deform', action='store_true', help='Whether to use debug mode')
+    parser.add_argument('--batch_size', type=int, default=1, help='Batch size for training the gaussian net.')
+    parser.add_argument('--total_steps', type=int, default=200000, help='Total steps for training the gaussian net.')
     
     args = parser.parse_args()
 
@@ -83,7 +88,7 @@ def main():
 
     dataloader = DataLoader(
         dataset, 
-        batch_size=1, 
+        batch_size=args.batch_size, 
         collate_fn=collate_fn, 
         shuffle=True,
         num_workers=89    
@@ -101,7 +106,8 @@ def main():
     model = GaussianAvatar(args)
     trainer = L.Trainer(
         default_root_dir=args.ckpt_path,
-        max_epochs=args.num_epochs,
+        # max_epochs=args.num_epochs,
+        max_steps=args.total_steps,
         logger=logger,
         callbacks=[checkpoint_callback],
         accelerator='gpu',

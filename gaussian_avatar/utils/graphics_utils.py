@@ -269,8 +269,26 @@ def project_gaussians(gaussians, intrinsic, extrinsic):
     # gaussians['xyz'] = projected_gaussians
     return projected_gaussians
 
-# def unproject_gaussians(gaussians, intrinsic, extrinsic):
+def project_xyz(xyz, intrinsic, extrinsic):
+    '''
+    Project xyz to image plane
+    xyz: [B, N, 3]
+    intrinsic: [B, 3, 3]
+    extrinsic: [B, 4, 4]
+    return: [B, N, 2]
+    '''
+    homogen_coord = torch.ones([xyz.shape[0], xyz.shape[1], 1], device=xyz.device)
+    homogeneous_xyz = torch.cat([xyz, homogen_coord], dim=-1)  # [B, N, 4]
 
+    cam_xyz = torch.matmul(extrinsic, homogeneous_xyz.transpose(-1, -2))  # [B, 4, N]
+    cam_xyz = cam_xyz.transpose(-1, -2)[..., :3]  # [B, N, 3]
+
+    projected_xy = torch.matmul(intrinsic, cam_xyz.transpose(-1, -2))  # [B, 3, N]
+    projected_xy = projected_xy.transpose(-1, -2)
+    projected_uv = projected_xy[..., :2] / projected_xy[..., 2:3]
+
+    return projected_uv
+    
 
 ################THUMAN################
 def _subdivide(vertices,
