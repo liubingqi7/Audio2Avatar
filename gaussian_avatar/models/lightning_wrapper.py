@@ -1,6 +1,8 @@
 import torch
 import lightning as L
 import wandb
+import os
+import torchvision.utils as vutils
 
 from models.core.net import GaussianNet, AnimationNet
 from models.utils.loss_utils import l1_loss, ssim
@@ -94,6 +96,22 @@ class GaussianAvatar(L.LightningModule):
                 log_dict[f"train/comparison_target"] = wandb.Image(images_target.detach().cpu().numpy())
             
             self.logger.experiment.log(log_dict)
+        elif self.global_step % 1001 == 0:
+            all_images_train = []
+            
+            for frame_idx in range(train_images.shape[1]):
+                real_image_train = train_images[0, frame_idx]
+                combined_train = torch.cat([rendered_images_train[-1][0, frame_idx], real_image_train], dim=1)
+                all_images_train.append(combined_train)
+            
+            images_train = torch.cat(all_images_train, dim=0)
+            
+            os.makedirs(os.path.join(self.args.output_dir, "train_images"), exist_ok=True)
+            vutils.save_image(
+                images_train.detach().cpu(),
+                os.path.join(self.args.output_dir, f"train_images/comparison_train_{self.global_step}.png"),
+                normalize=True
+            )
 
 
         return losses['total']
