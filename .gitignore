@@ -24,6 +24,7 @@ __pycache__/
 # Output directories
 checkpoints/
 logs/
+*logs/
 wandb/
 output/
 output_2/

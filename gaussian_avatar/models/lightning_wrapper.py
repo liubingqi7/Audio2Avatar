@@ -30,7 +30,6 @@ class GaussianAvatar(L.LightningModule):
             batch.cam_parms[k] = v.to(self.device)
         
         train_images = batch.video.to(self.device)
-        target_images = test_batch.video.to(self.device)
 
         gaussian, train_gaussians = self.gaussian_net.forward(batch)
         
@@ -39,7 +38,8 @@ class GaussianAvatar(L.LightningModule):
         rendered_images_target = []
         for gaussians in train_gaussians:
             rendered_images_train.append(self.animation_net.forward(gaussians, batch.smpl_parms, batch.cam_parms))
-            rendered_images_target.append(self.animation_net.forward(gaussians, test_batch.smpl_parms, test_batch.cam_parms))
+            if self.args.dataset == "zjumocap":
+                rendered_images_target.append(self.animation_net.forward(gaussians, test_batch.smpl_parms, test_batch.cam_parms))
         # rendered_images = self.animation_net.forward(gaussian, batch.smpl_parms, batch.cam_parms).permute(0, 2, 3, 1)
 
         losses = {}
@@ -55,13 +55,14 @@ class GaussianAvatar(L.LightningModule):
             self.log(f'train/l1_{i}_train', l1_loss(rendered_images_train[i], train_images), prog_bar=False)
             self.log(f'train/ssim_{i}_train', 1.0 - ssim(rendered_images_train[i], train_images), prog_bar=False)
             self.log(f'train/loss_{i}_train', l1_loss(rendered_images_train[i], train_images) * 0.8 + (1.0 - ssim(rendered_images_train[i], train_images)) * 0.2, prog_bar=False)
+            
+            if self.args.dataset == "zjumocap":
+                losses['l1'] += i_weight * l1_loss(rendered_images_target[i], target_images) * 0.8
+                losses['ssim'] += i_weight * (1.0 - ssim(rendered_images_target[i], target_images)) * 0.2
 
-            losses['l1'] += i_weight * l1_loss(rendered_images_target[i], target_images) * 0.8
-            losses['ssim'] += i_weight * (1.0 - ssim(rendered_images_target[i], target_images)) * 0.2
-
-            self.log(f'train/l1_{i}_target', l1_loss(rendered_images_target[i], target_images), prog_bar=False)
-            self.log(f'train/ssim_{i}_target', 1.0 - ssim(rendered_images_target[i], target_images), prog_bar=False)
-            self.log(f'train/loss_{i}_target', l1_loss(rendered_images_target[i], target_images) * 0.8 + (1.0 - ssim(rendered_images_target[i], target_images)) * 0.2, prog_bar=False)
+                self.log(f'train/l1_{i}_target', l1_loss(rendered_images_target[i], target_images), prog_bar=False)
+                self.log(f'train/ssim_{i}_target', 1.0 - ssim(rendered_images_target[i], target_images), prog_bar=False)
+                self.log(f'train/loss_{i}_target', l1_loss(rendered_images_target[i], target_images) * 0.8 + (1.0 - ssim(rendered_images_target[i], target_images)) * 0.2, prog_bar=False)
         
         losses['total'] = sum([v for k, v in losses.items()])
 
@@ -70,23 +71,30 @@ class GaussianAvatar(L.LightningModule):
         
         if self.use_wandb and self.global_step % 1001 == 0:
             all_images_train = []
-            all_images_target = []
             
             for frame_idx in range(train_images.shape[1]):
                 real_image_train = train_images[0, frame_idx]
-                real_image_target = target_images[0, frame_idx]
-                
                 combined_train = torch.cat([rendered_images_train[-1][0, frame_idx], real_image_train], dim=1)
-                combined_target = torch.cat([rendered_images_target[-1][0, frame_idx], real_image_target], dim=1)
                 all_images_train.append(combined_train)
-                all_images_target.append(combined_target)
             
             images_train = torch.cat(all_images_train, dim=0)
-            images_target = torch.cat(all_images_target, dim=0)
-            self.logger.experiment.log({
-                f"train/comparison_train": wandb.Image(images_train.detach().cpu().numpy()),
-                f"train/comparison_target": wandb.Image(images_target.detach().cpu().numpy())
-            })
+            
+            log_dict = {
+                f"train/comparison_train": wandb.Image(images_train.detach().cpu().numpy())
+            }
+            
+            if self.args.dataset == "zjumocap":
+                all_images_target = []
+                for frame_idx in range(target_images.shape[1]):
+                    real_image_target = target_images[0, frame_idx]
+                    combined_target = torch.cat([rendered_images_target[-1][0, frame_idx], real_image_target], dim=1)
+                    all_images_target.append(combined_target)
+                
+                images_target = torch.cat(all_images_target, dim=0)
+                log_dict[f"train/comparison_target"] = wandb.Image(images_target.detach().cpu().numpy())
+            
+            self.logger.experiment.log(log_dict)
+
 
         return losses['total']
     

@@ -148,7 +148,7 @@ class GaussianNet(nn.Module):
 
         if debug:
             # draw projected gaussians
-            draw_gaussians(projected_gaussians_uv, rgb_images)
+            draw_gaussians(projected_gaussians_uv, rgb_images, label='before_update')
 
         # sample features according to projected_gaussians_uv
         projected_gaussians_uv[..., 0] = projected_gaussians_uv[..., 0]/ W * 2 - 1.0
@@ -171,6 +171,15 @@ class GaussianNet(nn.Module):
         sampled_features = sampled_features.reshape(B, self.num_gaussians, T, -1).reshape(B, self.num_gaussians, -1)
 
         updated_gaussians = self.gaussian_updater(gaussians, sampled_features)
+
+        if debug:
+            #lbs transform
+            transformed_xyz, transformed_rot = self.lbs_transform(updated_gaussians, smpl_params)
+
+            projected_gaussians_uv = project_xyz(transformed_xyz.reshape(-1, self.num_gaussians, 3), cam_params['intrinsic'].reshape(-1, 3, 3), cam_params['extrinsic'].reshape(-1, 4, 4)).reshape(B, N_pose, -1, 2)
+        
+            # draw projected gaussians
+            draw_gaussians(projected_gaussians_uv, rgb_images, label='after_update')
 
         return updated_gaussians
 
@@ -317,6 +326,16 @@ class AnimationNet(nn.Module):
         if not self.args.deform:
             # LBS 
             transformed_gaussians = self.lbs_transform(gaussians, poses) #B -> B*N_poses
+
+            # project transformed gaussians to image plane
+            # projected_gaussians_uv = project_xyz(transformed_gaussians['xyz'].reshape(-1, N_gaussians, 3), cam_params['intrinsic'].reshape(-1, 3, 3), cam_params['extrinsic'].reshape(-1, 4, 4)).reshape(B, N_poses, -1, 2)
+            # print(f"projected_gaussians_uv shape: {projected_gaussians_uv.shape}")
+
+            # if 1:
+            #     # draw projected gaussians
+            #     # 创建一个纯黑的背景图像作为画布
+            #     black_canvas = torch.zeros((B, N_poses, 1024, 1024, 3), device=self.args.device)
+            #     draw_gaussians(projected_gaussians_uv, black_canvas)
         else:
             # First calculate the transformation matrix T and transform the gaussians
             transformed_gaussians = self.lbs_transform(gaussians, poses)
@@ -531,7 +550,7 @@ def draw_gaussians(projected_gaussians, rgb_images, label='projected'):
         
         # 保存图像
         import torchvision
-        save_path = f"test_images/{i}.png"
+        save_path = f"test_images/{label}_{i}.png"
         torchvision.utils.save_image(img.permute(2, 0, 1), save_path)
 
     # save original image

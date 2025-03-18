@@ -7,7 +7,7 @@ from lightning.pytorch import seed_everything
 from models.lightning_wrapper import GaussianAvatar
 from argparse import ArgumentParser
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, RandomSampler
 from datasets.dataset_video import VideoDataset
 from datasets.dataset_thuman import BaseDataset
 from datasets.dataset_zjumocap import ZJUMocapDataset
@@ -80,39 +80,46 @@ def main():
     args = setup_parser()
     logger = prepare_output_and_logger(args)
 
-    # dataset = BaseDataset(
-    #     dataset_root="/home/liubingqi/work/liubingqi/thuman2.0/view5_train",
-    #     scene_list=["/home/liubingqi/work/liubingqi/thuman2.0/train.json"],
-    #     use_smplx=True,
-    #     smpl_dir="/home/liubingqi/work/liubingqi/THuman/THuman2.0_smpl",
-    #     n_input_frames=3,
-    # )
+    # 根据dataset参数选择不同的数据集
+    if args.dataset == "thuman":
+        dataset = BaseDataset(
+            dataset_root="/home/liubingqi/work/liubingqi/thuman2.0/view5_train",
+            scene_list=["/home/liubingqi/work/liubingqi/thuman2.0/train.json"],
+            use_smplx=True,
+            smpl_dir="/home/liubingqi/work/liubingqi/THuman/THuman2.0_smpl",
+            n_input_frames=args.n_input_frames-1,
+        )
+        collate_function = collate_fn
+        sampler = None
+    elif args.dataset == "zjumocap":
+        dataset = ZJUMocapDataset(
+            dataset_root='/home/liubingqi/work/Audio2Avatar/gaussian_avatar/data/zju_mocap',
+            smpl_path='/home/liubingqi/work/liubingqi/SMPL_SMPLX/SMPL_models/smpl/SMPL_NEUTRAL.pkl',
+            n_input_frames=args.n_input_frames,
+            n_test_frames=args.n_test_frames,
+        )
+        collate_function = collate_fn_zjumocap
+        sampler = RandomSampler(dataset, replacement=True, num_samples=1000)
 
-    dataset = ZJUMocapDataset(
-        dataset_root='/home/liubingqi/work/Audio2Avatar/gaussian_avatar/data/zju_mocap',
-        smpl_path='/home/liubingqi/work/liubingqi/SMPL_SMPLX/SMPL_models/smpl/SMPL_NEUTRAL.pkl',
-        n_input_frames=4,
-        n_test_frames=4,
-    )
-
-    # dataset = VideoDataset(args)
+    else:
+        dataset = VideoDataset(args)
+        collate_function = collate_fn
 
     dataloader = DataLoader(
         dataset, 
         batch_size=args.batch_size, 
-        collate_fn=collate_fn_zjumocap, 
-        shuffle=True,
-        num_workers=89    
+        collate_fn=collate_function, 
+        num_workers=89,
+        sampler=sampler
     )
 
     checkpoint_callback = ModelCheckpoint(
         dirpath=os.path.join(args.output_dir, 'checkpoints'),
         filename='{epoch}-{train_loss:.2f}',
         save_top_k=3,
-        monitor='train/loss_1',
+        monitor='train/loss',
         mode='min',
-        save_last=True,
-        every_n_epochs=200,
+        save_last=True
     )
 
     model = GaussianAvatar(args)
@@ -144,6 +151,7 @@ def main():
         # strategy='ddp',
         gradient_clip_algorithm='norm',
         gradient_clip_val=1.0,
+        # fast_dev_run=True
     )
 
     trainer.fit(model, dataloader)

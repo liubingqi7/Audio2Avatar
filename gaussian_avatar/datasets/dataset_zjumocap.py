@@ -82,33 +82,52 @@ class ZJUMocapDataset(Dataset):
     def __len__(self):
         return len(self.index)
 
-    def get_frame_data(self, scene, camera_id, frame_ids):
+    def get_frame_data(self, scene, camera_ids, frame_ids):
+        """
+        获取多个相机和多个帧的数据
+        
+        参数:
+            scene: 场景名称
+            camera_ids: 可以是单个相机ID或多个相机ID的列表/数组
+            frame_ids: 可以是单个帧ID或多个帧ID的列表/数组
+        """
+        # 确保camera_ids和frame_ids是可迭代对象
+        if not isinstance(camera_ids, (list, np.ndarray)):
+            camera_ids = [camera_ids]
+        if not isinstance(frame_ids, (list, np.ndarray)):
+            frame_ids = [frame_ids]
+            
         rgbs = []
         masks = []
         intrinsics = []
         extrinsics = []
         smpls = []
         
-        camera_str = f"{camera_id:03d}"
-        for frame_id in frame_ids:
-            frame_str = f"{frame_id:06d}"
-            
-            item = {
-                'scene': scene,
-                'camera': camera_str,
-                'frame': frame_str
-            }
-            
-            rgbs.append(self.load_rgb(item))
-            masks.append(self.load_mask(item))
-            intrinsics.append(self.load_intrinsic(item))
-            extrinsics.append(self.load_extrinsic(item))
-            smpls.append(self.load_smpl(item))
-            
+        # 遍历所有相机和帧的组合
+        for camera_id in camera_ids:
+            camera_str = f"{camera_id:03d}"
+            for frame_id in frame_ids:
+                frame_str = f"{frame_id:06d}"
+                
+                item = {
+                    'scene': scene,
+                    'camera': camera_str,
+                    'frame': frame_str
+                }
+                
+                rgbs.append(self.load_rgb(item))
+                masks.append(self.load_mask(item))
+                intrinsics.append(self.load_intrinsic(item))
+                extrinsics.append(self.load_extrinsic(item))
+                smpls.append(self.load_smpl(item))
+        
+        # 将所有数据堆叠成批次
         rgbs = np.stack(rgbs)
         masks = np.stack(masks)
         intrinsics = np.stack(intrinsics)
         extrinsics = np.stack(extrinsics)
+        
+        # 合并SMPL参数
         smpl_all = {}
         for smpl in smpls:
             for key in smpl.keys():
@@ -117,9 +136,11 @@ class ZJUMocapDataset(Dataset):
                 else:
                     smpl_all[key] = np.concatenate([smpl_all[key], smpl[key]], axis=0)
         
+        # 处理背景
         masks = masks[..., None] * 255.0
         rgbs = rgbs * masks + (1 - masks) * np.array([255, 255, 255])
         
+        # 转换为张量
         rgbs = torch.from_numpy(rgbs.astype(np.float32) / 255.0)
         masks = torch.from_numpy(masks[..., 0].astype(np.float32))
         intrinsics = torch.from_numpy(intrinsics.astype(np.float32))
@@ -138,22 +159,49 @@ class ZJUMocapDataset(Dataset):
             height=torch.tensor(rgbs.shape[3], dtype=torch.int32),
         )
 
+    # def __getitem__(self, idx):
+    #     scene_info = self.index[idx]
+    #     scene = scene_info['scene']
+    #     num_cameras = scene_info['num_cameras']
+    #     num_frames = scene_info['num_frames']
+        
+    #     camera_id = np.random.randint(0, num_cameras)
+    #     train_frame_ids = np.random.choice(num_frames, size=self.n_input_frames, replace=False)
+    #     test_frame_ids = np.random.choice(num_frames, size=self.n_test_frames, replace=False)
+
+    #     # print(f"scene: {scene}")
+    #     # print(f"train_camera_id: {camera_id}, test_camera_id: {camera_id}")
+    #     # print(f"train_frame_ids: {train_frame_ids}, test_frame_ids: {test_frame_ids}")
+        
+    #     train_data = self.get_frame_data(scene, camera_id, train_frame_ids)
+    #     test_data = self.get_frame_data(scene, camera_id, test_frame_ids)
+        
+    #     return {
+    #         'train': train_data,
+    #         'test': test_data
+    #     }
+
     def __getitem__(self, idx):
         scene_info = self.index[idx]
         scene = scene_info['scene']
         num_cameras = scene_info['num_cameras']
         num_frames = scene_info['num_frames']
         
-        camera_id = np.random.randint(0, num_cameras)
-        train_frame_ids = np.random.choice(num_frames, size=self.n_input_frames, replace=False)
-        test_frame_ids = np.random.choice(num_frames, size=self.n_test_frames, replace=False)
-
-        # print(f"scene: {scene}")
-        # print(f"train_camera_id: {camera_id}, test_camera_id: {camera_id}")
-        # print(f"train_frame_ids: {train_frame_ids}, test_frame_ids: {test_frame_ids}")
+        frame_id = np.random.randint(0, num_frames)
         
-        train_data = self.get_frame_data(scene, camera_id, train_frame_ids)
-        test_data = self.get_frame_data(scene, camera_id, test_frame_ids)
+        train_camera_ids = np.random.choice(num_cameras, size=self.n_input_frames, replace=True)
+        
+        test_camera_ids = np.random.choice(num_cameras, size=self.n_test_frames, replace=True)
+        for i in range(self.n_test_frames):
+            if test_camera_ids[i] in train_camera_ids:
+                test_camera_ids[i] = (test_camera_ids[i] + 1) % num_cameras
+        
+        # print(f"scene: {scene}")
+        # print(f"train_camera_ids: {train_camera_ids}, test_camera_ids: {test_camera_ids}")
+        # print(f"frame_id: {frame_id}")
+        
+        train_data = self.get_frame_data(scene, train_camera_ids, frame_id)
+        test_data = self.get_frame_data(scene, test_camera_ids, frame_id)
         
         return {
             'train': train_data,
