@@ -724,15 +724,15 @@ class GaussianDeformer(nn.Module):
         
         # Transformation encoder (calculated transformation matrix from lbs weights)
         # Input shape: [B, N, 4, 4] -> se3 parameters 
-        self.transformation_encoder = nn.Sequential(
-            nn.Linear(6, hidden_dim),
-            nn.LayerNorm(hidden_dim),
-            nn.LeakyReLU(0.2),
-            nn.Linear(hidden_dim, hidden_dim)
-        )
+        # self.transformation_encoder = nn.Sequential(
+        #     nn.Linear(6, hidden_dim),
+        #     nn.LayerNorm(hidden_dim),
+        #     nn.LeakyReLU(0.2),
+        #     nn.Linear(hidden_dim, hidden_dim)
+        # )
 
         # feat decoder
-        self.feat_decoder = nn.Sequential(
+        self.feat_encoder = nn.Sequential(
             nn.Linear(feat_dim, hidden_dim),
             nn.LayerNorm(hidden_dim),
             nn.LeakyReLU(0.2),
@@ -744,6 +744,14 @@ class GaussianDeformer(nn.Module):
         # Gaussian Deform Decoder, input (pose_emb, trans_emb, gs_attr_emb, feat_emb), output (se3, scale, rot, opacity, color)
         # self.
         
+        # MLP for offset prediction
+        self.offset_input_dim = hidden_dim + hidden_dim + hidden_dim
+        self.offset_predictor = nn.Sequential(
+            nn.Linear(self.offset_input_dim, hidden_dim),
+            nn.LayerNorm(hidden_dim),
+            nn.LeakyReLU(0.2),
+            nn.Linear(hidden_dim, self._gaussian_dim)
+        )
         
         # LBS weights feature encoder
         # self.lbs_encoder = nn.Sequential(
@@ -774,84 +782,52 @@ class GaussianDeformer(nn.Module):
                 the same keys as the input gaussian dictionary
         """
 
-        B = pose.shape[0]
-        N = gaussians['xyz'].shape[0]
-        # Prepare gaussian input features
-        gaussian_feats = torch.cat([
-            gaussians['xyz'],
-            gaussians['scale'], 
-            gaussians['rot'],
-            gaussians['opacity'],
-            gaussians['color']
-        ], dim=-1)  # [N, _gaussian_dim]
+        body_pose = pose['body_pose'][..., 3:]
+        global_orient = pose['body_pose'][..., :3]
+        global_trans = pose['trans']
 
-        gaussian_feats = gaussian_feats.unsqueeze(0).expand(pose.shape[0], -1, -1)
-        lbs_weights = lbs_weights.unsqueeze(0).expand(pose.shape[0], -1, -1)
-        pose = pose.unsqueeze(1).expand(-1, gaussian_feats.shape[1], -1)
-
-        # print(gaussian_feats.shape, lbs_weights.shape, pose.shape)
+        B, T = body_pose.shape[0], body_pose.shape[1]
+        N = gaussians['xyz'].shape[2]
         
-        feats = torch.cat([gaussian_feats, lbs_weights, pose], dim=-1)
+        xyzs = gaussians['xyz'].reshape(B*T, -1, 3)
+        rots = gaussians['rot'].reshape(B*T, -1, 4)
+        scales = gaussians['scale'].reshape(B*T, -1, 3)
+        opacities = gaussians['opacity'].reshape(B*T, -1, 1)
+        colors = gaussians['color'].reshape(B*T, -1, 3)
+        gaussian_feats = gaussians['feats'].reshape(B*T, -1, 32)
 
-        # offset = torch.tensor([gs['xyz'].shape[0] for gs in normalized_gs]).cumsum(0)
-        offset = torch.arange(1, B + 1, device=gaussians['xyz'].device) * N
-        # print(offset)
+        # encode poses
+        pose_emb = self.pose_encoder(torch.cat([global_orient, body_pose, global_trans], dim=-1))  # [B, T, C]
+        pose_emb = pose_emb.unsqueeze(2).expand(-1, -1, N, -1)  # [B, T, N, C]
+        pose_emb = pose_emb.reshape(B*T, N, -1)  # [B*T, N, C]
 
-        model_input = {
-            'coord': gaussians['xyz'].unsqueeze(0).expand(pose.shape[0], -1, -1).reshape(B*N, -1),
-            'grid_size': torch.ones([3])*1.0/self.grid_resolution,
-            'offset': offset.to(self.args.device),
-            'feat': feats.reshape(B*N, -1),
-            # 'batch': torch.arange(B, device=gaussians['xyz'].device)
-        }
-        model_input['grid_coord'] = torch.floor(model_input['coord']*self.grid_resolution).int() #[0~1]/grid_resolution -> int
-        # print(model_input['coord'].shape, model_input['grid_coord'].shape, model_input['offset'].shape, model_input['feat'].shape)
+        # encode gaussian attributes
+        gaussian_attr = torch.cat([
+            xyzs,
+            scales,
+            rots,
+            opacities,
+            colors
+        ], dim=-1)
+        gaussian_emb = self.gaussian_attr_encoder(gaussian_attr)
 
-        # 2. predict delta parameters
-        graph_feats = self.graph_encoder(model_input)['feat']
-        # print(graph_feats.shape)
-        # 1. Extract local features through dynamic graph
-        # graph_feats = self.graph_encoder(feats.permute(0, 2, 1)) # [B, N, hidden_dim]
+        # encode gaussian features
+        gaussian_feats = self.feat_encoder(gaussian_feats)
 
-        offset_pred = self.offset_predictor(graph_feats)
-        offset_pred = offset_pred.reshape(B, N, -1)
+        input_feats = torch.cat([pose_emb, gaussian_emb, gaussian_feats], dim=-1)
 
-        # Process each pose to get multiple deformed gaussians
-        deformed_gaussians = []
-        all_lbs_offsets = []
-        
-        for i in range(B):  # Iterate through each pose
-            # 2. Encode pose features
-            # pose_feats = self.pose_encoder(p)  # [1, hidden_dim]
-            # pose_feats = pose_feats.expand(gaussian_feats.shape[0], -1)  # [N, hidden_dim]
-            
-            # 3. Encode LBS weight features            
-            # 4. Predict offset and weight correction
-            # combined_feats = torch.cat([graph_feats, pose_feats, lbs_feats], dim=-1)
-            # pred = self.offset_predictor(combined_feats)
-            
-            gaussians_offset = offset_pred[i, :, :self._gaussian_dim]  # [N, gaussian_dim]
-            lbs_offset = offset_pred[i, :, self._gaussian_dim:]  # [N, 24]
+        # deform gaussians
+        offset_pred = self.offset_predictor(input_feats)
+        offset_pred = offset_pred.reshape(B, T, N, -1)
 
-            # 5. Update gaussian parameters for this pose
-            deformed_gs = {}
-            deformed_gs['xyz'] = gaussians['xyz'] + gaussians_offset[:, :3]/10
-            deformed_gs['scale'] = gaussians['scale'] + gaussians_offset[:, 3:6]
-            deformed_gs['rot'] = gaussians['rot']  + gaussians_offset[:, 6:10]
-            deformed_gs['opacity'] = gaussians['opacity'] # + gaussians_offset[:, 10:11]
-            deformed_gs['color'] = gaussians['color'] # + gaussians_offset[:, 11:]
-            
-            deformed_gaussians.append(deformed_gs)
-            all_lbs_offsets.append(lbs_offset)
+        gaussians['xyz'] = gaussians['xyz'] + offset_pred[..., :3] / 10
+        gaussians['scale'] = gaussians['scale'] + offset_pred[..., 3:6]
+        rot_delta = offset_pred[..., 6:10] / (offset_pred[..., 6:10].norm(dim=-1, keepdim=True) + 1e-8)
+        gaussians['rot'] = quaternion_multiply(gaussians['rot'], rot_delta)
+        gaussians['opacity'] = gaussians['opacity'] + offset_pred[..., 10:11]
+        gaussians['color'] = gaussians['color'] + offset_pred[..., 11:]
 
-        # Stack lbs offsets to get [B, N, 24] tensor
-        all_lbs_offsets = torch.stack(all_lbs_offsets)
-
-        combined_deformed_gs = {}
-        for key in deformed_gaussians[0].keys():
-            combined_deformed_gs[key] = torch.stack([d[key] for d in deformed_gaussians], dim=0)
-        
-        return combined_deformed_gs, all_lbs_offsets
+        return gaussians
 
 
 

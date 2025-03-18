@@ -40,6 +40,19 @@ def collate_fn(batch):
         height=height,
     )
 
+def collate_fn_zjumocap(batch):
+    """
+    Collate function for video data.
+    """
+    batch_train = [item['train'] for item in batch]
+    batch_test = [item['test'] for item in batch]
+    
+    batch_train = collate_fn(batch_train)
+    batch_test = collate_fn(batch_test)
+
+    return (batch_train, batch_test)
+
+
 
 def collate_fn_train(batch):
     """

@@ -94,7 +94,8 @@ class GaussianNet(nn.Module):
                 else:
                     tmp_gs[key] = value 
 
-            all_gaussians.append(tmp_gs)
+            if is_train:
+                all_gaussians.append(tmp_gs)
 
         if is_train:
             return curr_gaussians, all_gaussians
@@ -267,8 +268,6 @@ class GaussianNet(nn.Module):
 
         return visibility_map
 
-        
-
 
 class AnimationNet(nn.Module):
     def __init__(self, args):
@@ -305,11 +304,11 @@ class AnimationNet(nn.Module):
         else:
             self.deforme_none = simple_stack
 
-    def forward(self, gaussianses, poses, cam_params, is_train=True):
-        B, N_gaussians, _ = gaussianses['xyz'].shape
+    def forward(self, gaussians, poses, cam_params, is_train=True):
+        B, N_gaussians, _ = gaussians['xyz'].shape
         B, N_poses, _ = poses['body_pose'].shape
 
-        # print(f"gaussianses['xyz'].shape: {gaussianses['xyz'].shape}")
+        # print(f"gaussians['xyz'].shape: {gaussians['xyz'].shape}")
         # print(f"poses['body_pose'].shape: {poses['body_pose'].shape}")
 
         all_rendered_images = []
@@ -317,9 +316,11 @@ class AnimationNet(nn.Module):
         # if not deform, just use lbs
         if not self.args.deform:
             # LBS 
-            transformed_gaussians = self.lbs_transform(gaussianses, poses) #B -> B*N_poses
+            transformed_gaussians = self.lbs_transform(gaussians, poses) #B -> B*N_poses
         else:
-            transformed_gaussians = gaussianses
+            # First calculate the transformation matrix T and transform the gaussians
+            transformed_gaussians = self.lbs_transform(gaussians, poses)
+            transformed_gaussians = self.deformer(transformed_gaussians, poses)
         
         # Render gaussians
         image = render_batch(transformed_gaussians, cam_params['intrinsic'], cam_params['extrinsic'], self.args)

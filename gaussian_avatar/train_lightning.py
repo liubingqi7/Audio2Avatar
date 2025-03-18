@@ -10,7 +10,8 @@ import torch
 from torch.utils.data import DataLoader
 from datasets.dataset_video import VideoDataset
 from datasets.dataset_thuman import BaseDataset
-from utils.data_utils import collate_fn
+from datasets.dataset_zjumocap import ZJUMocapDataset
+from utils.data_utils import collate_fn, collate_fn_zjumocap
 from lightning.pytorch.callbacks import ModelCheckpoint
 
 seed_everything(42, workers=True)
@@ -67,6 +68,9 @@ def setup_parser():
     parser.add_argument('--deform', action='store_true', help='Whether to use debug mode')
     parser.add_argument('--batch_size', type=int, default=1, help='Batch size for training the gaussian net.')
     parser.add_argument('--total_steps', type=int, default=200000, help='Total steps for training the gaussian net.')
+    parser.add_argument('--dataset', type=str, default='zjumocap', help='Dataset to use for training the gaussian net.')
+    parser.add_argument('--n_input_frames', type=int, default=4, help='Number of input frames for training the gaussian net.')
+    parser.add_argument('--n_test_frames', type=int, default=4, help='Number of test frames for training the gaussian net.')
     
     args = parser.parse_args()
 
@@ -76,12 +80,19 @@ def main():
     args = setup_parser()
     logger = prepare_output_and_logger(args)
 
-    dataset = BaseDataset(
-        dataset_root="/home/liubingqi/work/liubingqi/thuman2.0/view5_train",
-        scene_list=["/home/liubingqi/work/liubingqi/thuman2.0/train.json"],
-        use_smplx=True,
-        smpl_dir="/home/liubingqi/work/liubingqi/THuman/THuman2.0_smpl",
-        n_input_frames=3,
+    # dataset = BaseDataset(
+    #     dataset_root="/home/liubingqi/work/liubingqi/thuman2.0/view5_train",
+    #     scene_list=["/home/liubingqi/work/liubingqi/thuman2.0/train.json"],
+    #     use_smplx=True,
+    #     smpl_dir="/home/liubingqi/work/liubingqi/THuman/THuman2.0_smpl",
+    #     n_input_frames=3,
+    # )
+
+    dataset = ZJUMocapDataset(
+        dataset_root='/home/liubingqi/work/Audio2Avatar/gaussian_avatar/data/zju_mocap',
+        smpl_path='/home/liubingqi/work/liubingqi/SMPL_SMPLX/SMPL_models/smpl/SMPL_NEUTRAL.pkl',
+        n_input_frames=4,
+        n_test_frames=4,
     )
 
     # dataset = VideoDataset(args)
@@ -89,7 +100,7 @@ def main():
     dataloader = DataLoader(
         dataset, 
         batch_size=args.batch_size, 
-        collate_fn=collate_fn, 
+        collate_fn=collate_fn_zjumocap, 
         shuffle=True,
         num_workers=89    
     )
@@ -101,11 +112,29 @@ def main():
         monitor='train/loss_1',
         mode='min',
         save_last=True,
+        every_n_epochs=200,
     )
 
     model = GaussianAvatar(args)
+
+    if args.use_ckpt:
+        if args.ckpt_path is not None:
+            print(f"Loading pretrained weights from {args.ckpt_path}...")
+            checkpoint = torch.load(args.ckpt_path)
+            # If it's a lightning checkpoint, we need to extract the model weights
+            if 'state_dict' in checkpoint:
+                # Extract GaussianNet weights from lightning checkpoint
+                gaussian_net_state_dict = {k.replace('gaussian_net.', ''): v for k, v in checkpoint['state_dict'].items() 
+                                          if k.startswith('gaussian_net.')}
+                model.gaussian_net.load_state_dict(gaussian_net_state_dict)
+                print("Successfully loaded GaussianNet weights")
+            else:
+                # Directly load model weights
+                model.gaussian_net.load_state_dict(checkpoint)
+                print("Successfully loaded model weights")
+
     trainer = L.Trainer(
-        default_root_dir=args.ckpt_path,
+        # default_root_dir=args.ckpt_path,
         # max_epochs=args.num_epochs,
         max_steps=args.total_steps,
         logger=logger,

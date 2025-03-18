@@ -1,15 +1,19 @@
-import torch
 import os
-from models.core.net import GaussianNet, AnimationNet
-from datasets.dataset_video import VideoDataset
+import lightning as L
+from lightning.pytorch import seed_everything
+from models.lightning_wrapper import GaussianAvatar
 from argparse import ArgumentParser
-from datasets.utils import collate_fn
-import matplotlib.pyplot as plt
-import torch.nn as nn
-from tqdm import tqdm
-from models.utils.loss_utils import l1_loss, ssim
+import torch
+from torch.utils.data import DataLoader
+from datasets.dataset_video import VideoDataset
+from datasets.dataset_thuman import BaseDataset
+from utils.data_utils import collate_fn
+import imageio
+import numpy as np
 
-def main():
+seed_everything(42, workers=True)
+
+def setup_parser():
     parser = ArgumentParser()
     parser = ArgumentParser(description="Video Dataset Parameters")
     
@@ -43,66 +47,138 @@ def main():
                         help='Path to the animation net checkpoint file.')  
     parser.add_argument('--output_dir', type=str, default='results',
                     help='Output directory for saving rendered images')
+    parser.add_argument('--experiment_name', type=str, default='test_lightning',
+                    help='Name of the experiment')
+    parser.add_argument('--use_wandb', action='store_true', help='Whether to use wandb')
+    parser.add_argument('--num_iters', type=int, default=2,
+                        help='Number of iterations for training the gaussian net.')
+    parser.add_argument('--deform', action='store_true', help='Whether to use debug mode')
+    parser.add_argument('--batch_size', type=int, default=1, help='Batch size for training the gaussian net.')
+    parser.add_argument('--total_steps', type=int, default=200000, help='Total steps for training the gaussian net.')
     
     args = parser.parse_args()
 
-    net = GaussianNet(args).to(args.device)
-    animation_net = AnimationNet(args).to(args.device)
+    return args
 
-    # load model
-    if args.net_ckpt_path:
-        net_ckpt_path = os.path.join(args.ckpt_path, args.net_ckpt_path)    
-        net.load_state_dict(torch.load(net_ckpt_path))
-    if args.animation_net_ckpt_path:
-        animation_net_ckpt_path = os.path.join(args.ckpt_path, args.animation_net_ckpt_path)
-        animation_net.load_state_dict(torch.load(animation_net_ckpt_path))
+def inference():
+    args = setup_parser()
 
-    net.eval()
-    animation_net.eval()
+    dataset = BaseDataset(
+        dataset_root="/home/liubingqi/work/liubingqi/thuman2.0/view5_train",
+        scene_list=["/home/liubingqi/work/liubingqi/thuman2.0/train.json"],
+        use_smplx=True,
+        smpl_dir="/home/liubingqi/work/liubingqi/THuman/THuman2.0_smpl",
+        n_input_frames=3,
+    )
 
-    # load reference images
-    dataset = VideoDataset(args)
-    dataloader = torch.utils.data.DataLoader(dataset, batch_size=1, collate_fn=collate_fn)
+    dataloader = DataLoader(
+        dataset,
+        batch_size=args.batch_size,
+        collate_fn=collate_fn,
+        shuffle=False,
+        num_workers=4
+    )
+
+    model = GaussianAvatar.load_from_checkpoint(args.ckpt_path, args=args)
+    model.eval()
+    model.to(args.device)
+
+    data = None
+    for i, d in enumerate(dataloader):
+        if i == 199:
+            data = d
+            break
 
     with torch.no_grad():
-        for i, data in enumerate(dataloader):
-            for k, v in data.smpl_parms.items():
-                data.smpl_parms[k] = v.to(args.device)
-            for k, v in data.cam_parms.items():
-                data.cam_parms[k] = v.to(args.device)
-
-            target_images = data.video.to(args.device)
-            
-            gaussian = net.forward(data)
-            rendered_images = animation_net.forward(gaussian, data.smpl_parms, data.cam_parms).permute(0, 2, 3, 1)
-
-            for j in range(rendered_images.shape[0]):
-                save_path = f"{args.output_dir}/demo_frame_{i*4+j}_rendered.png"
-                plt.imsave(save_path, rendered_images[j].detach().cpu().numpy())
-                gt_path = f"{args.output_dir}/demo_frame_{i*4+j}_gt.png"
-                plt.imsave(gt_path, target_images[0, j].detach().cpu().numpy())
-                print(f"Saved rendered and gt image to {save_path}")
-
+        cano_gaussians = model.gaussian_net(data, is_train=False)
     
-    # smpl_params_list = []
-    # cam_params_list = []
-    # for i, batch in enumerate(dataloader):
-    #     if i >= 20:
-    #         break
-    #     for k, v in batch.smpl_parms.items():
-    #         batch.smpl_parms[k] = v.to(args.device)
-    #     for k, v in batch.cam_parms.items():
-    #         batch.cam_parms[k] = v.to(args.device)
-    #     smpl_params_list.append(batch.smpl_parms)
-    #     cam_params_list.append(batch.cam_parms)
+    print(f"cano_gaussians['xyz'].shape: {cano_gaussians['xyz'].shape}")
     
-    # for i, (smpl_params, cam_params) in enumerate(zip(smpl_params_list, cam_params_list)):
-    #     rendered_image = animation_net.forward(gaussian, smpl_params, cam_params).permute(0, 2, 3, 1)
-    #     print(rendered_image.shape)
         
-    #     save_path = f"{args.output_dir}/demo_frame_{i}.png"
-    #     plt.imsave(save_path, rendered_image[0].detach().cpu().numpy())
-    #     print(f"Saved rendered image to {save_path}")
+    zero_pose = torch.zeros((1, 4, 72)).to(args.device)
+
+    demo_pose = {
+        'body_pose': zero_pose,
+        'trans': data.smpl_parms['trans'],
+    }
+
+    # 获取当前相机外参
+    current_extrinsics = data.cam_parms['extrinsic']  # [B, N, 4, 4]
+    B, N = current_extrinsics.shape[:2]
+    
+    # 定义总视角数
+    num_views = 30
+    
+    # 定义水平旋转和俯仰角度的参数
+    angles_y = torch.linspace(0, 2*np.pi, num_views).to(args.device)  # 水平360度旋转
+    angles_x = torch.sin(torch.linspace(0, 2*np.pi, num_views)).to(args.device) * 0.5  # 俯仰角度变化(-30度到30度)
+    
+    # 创建新的外参矩阵列表
+    new_extrinsics = []
+    
+    for b in range(B):
+        batch_extrinsics = []
+        for view_idx in range(num_views):
+            # 获取原始外参
+            orig_extrinsic = current_extrinsics[b,0]  # 使用第一个视角作为基准
+            
+            # 创建绕Y轴的旋转矩阵（水平旋转）
+            angle_y = angles_y[view_idx]
+            Ry = torch.tensor([[torch.cos(angle_y), 0, torch.sin(angle_y)],
+                             [0, 1, 0],
+                             [-torch.sin(angle_y), 0, torch.cos(angle_y)]], device=args.device)
+            
+            # 创建绕X轴的旋转矩阵（俯仰角度）
+            angle_x = angles_x[view_idx]
+            Rx = torch.tensor([[1, 0, 0],
+                             [0, torch.cos(angle_x), -torch.sin(angle_x)],
+                             [0, torch.sin(angle_x), torch.cos(angle_x)]], device=args.device)
+            
+            # 组合新的外参矩阵，先绕Y轴旋转，再绕X轴旋转
+            new_extrinsic = torch.eye(4, device=args.device)
+            new_extrinsic[:3,:3] = Rx @ Ry @ orig_extrinsic[:3,:3]
+            new_extrinsic[:3,3] = orig_extrinsic[:3,3].clone()
+            
+            batch_extrinsics.append(new_extrinsic)
+            
+        new_extrinsics.append(torch.stack(batch_extrinsics))
+    
+    new_extrinsics = torch.stack(new_extrinsics)
+    
+    # 更新相机参数中的外参
+    data.cam_parms['extrinsic'] = new_extrinsics
+
+    # 将内参扩展到相同维度
+    data.cam_parms['intrinsic'] = data.cam_parms['intrinsic'][:, 0:1].repeat(1, num_views, 1, 1)
+
+    # 将pose扩展到相同维度
+    for k in data.smpl_parms.keys():
+        data.smpl_parms[k] = data.smpl_parms[k][:, 0:1].repeat(1, num_views, 1)
+    
+    rendered_image = model.animation_net(
+        gaussians=cano_gaussians,
+        poses=data.smpl_parms,
+        cam_params=data.cam_parms,
+    )
+    
+    os.makedirs(args.output_dir, exist_ok=True)
+    rendered_image = (rendered_image.detach().cpu().numpy() * 255).astype(np.uint8)
+    
+    for i in range(rendered_image.shape[1]):
+        imageio.imwrite(
+            os.path.join(args.output_dir, f'posed_render_{i}.png'),
+            rendered_image[0, i]
+        )
+
+    print(data.video.shape)
+
+    # store input
+    os.makedirs(args.output_dir, exist_ok=True)
+    for i in range(data.video.shape[1]):
+        imageio.imwrite(
+            os.path.join(args.output_dir, f'input_image_{i}.png'),
+            (data.video[0, i].detach().cpu().numpy() * 255.0).astype(np.uint8)
+        )
 
 if __name__ == "__main__":
-    main()
+    inference()
