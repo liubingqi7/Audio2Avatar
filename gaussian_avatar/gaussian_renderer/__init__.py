@@ -91,7 +91,7 @@ def render_one(xyzs, rots, scales, opacities, colors, K, E, args, bg_color=None,
     tanfovy = math.tan(FovY * 0.5)
 
     world_view_transform = getWorld2View2_torch(R, T).transpose(0, 1)
-    projection_matrix = getProjectionMatrix_torch(znear=znear, zfar=zfar, fovX=FovX, fovY=FovY).transpose(0,1)
+    projection_matrix = getProjectionMatrix_torch(znear=znear, zfar=zfar, fovX=FovX, fovY=FovY, K=intrinsics, w=width, h=height).transpose(0,1)
     full_proj_transform = (world_view_transform.unsqueeze(0).bmm(projection_matrix.unsqueeze(0))).squeeze(0)
     camera_center = world_view_transform.inverse()[3, :3]
 
@@ -129,6 +129,10 @@ def render_one(xyzs, rots, scales, opacities, colors, K, E, args, bg_color=None,
     scales = torch.min(torch.exp(scales-SCALE_BIAS), torch.tensor(0.1, device=scales.device))
     opacities = torch.sigmoid(opacities-OPACITY_BIAS)
 
+    if debug:
+        scales = torch.ones_like(scales, device=scales.device) * 0.01
+        opacities = torch.ones_like(opacities, device=opacities.device) * 0.1
+
     # print(f"scale range: {scales.min().item()}, {scales.max().item()}")
     # print(f"opacity range: {opacities.min().item()}, {opacities.max().item()}")
    
@@ -151,11 +155,11 @@ def render_one(xyzs, rots, scales, opacities, colors, K, E, args, bg_color=None,
     # print(f"colors.shape: {colors.shape}")
     # print(f"opacities.shape: {opacities.shape}")
 
-    if debug:
-        # rots = torch.tensor([1.0, 0.0, 0.0, 0.0], device="cuda").expand(xyzs.shape[0], -1)
-        scales = torch.ones((xyzs.shape[0], 3), device="cuda") * 0.02
-        # colors = torch.ones((xyzs.shape[0], 3), device="cuda")
-        opacities = torch.ones((xyzs.shape[0], 1), device="cuda") * 0.1
+    # if debug:
+    #     # rots = torch.tensor([1.0, 0.0, 0.0, 0.0], device="cuda").expand(xyzs.shape[0], -1)
+    #     scales = torch.ones((xyzs.shape[0], 3), device="cuda") * 0.02
+    #     # colors = torch.ones((xyzs.shape[0], 3), device="cuda")
+    #     opacities = torch.ones((xyzs.shape[0], 1), device="cuda") * 0.1
  
     screenspace_points = torch.zeros_like(xyzs, dtype=xyzs.dtype, requires_grad=True, device="cuda") + 0
     try:

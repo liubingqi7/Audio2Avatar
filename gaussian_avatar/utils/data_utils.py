@@ -40,9 +40,49 @@ def collate_fn(batch):
         height=height,
     )
 
+def collate_fn_thuman(batch):
+    """
+    Collate function for thuman dataset.
+    """
+    time_dim = batch[0].video.shape[0]
+    train_frames = time_dim - 1
+    
+    train_video = torch.stack([b.video[:train_frames] for b in batch], dim=0)
+    train_smpl_parms = {k: torch.stack([b.smpl_parms[k][:train_frames] for b in batch], dim=0) 
+                      for k in batch[0].smpl_parms.keys()}
+    train_cam_parms = {k: torch.stack([b.cam_parms[k][:train_frames] for b in batch], dim=0)
+                     for k in batch[0].cam_parms.keys()}
+    
+    test_video = torch.stack([b.video[-1:] for b in batch], dim=0)
+    test_smpl_parms = {k: torch.stack([b.smpl_parms[k][-1:] for b in batch], dim=0) 
+                     for k in batch[0].smpl_parms.keys()}
+    test_cam_parms = {k: torch.stack([b.cam_parms[k][-1:] for b in batch], dim=0)
+                    for k in batch[0].cam_parms.keys()}
+    
+    width = torch.stack([b.width for b in batch], dim=0)
+    height = torch.stack([b.height for b in batch], dim=0)
+
+    batch_train = VideoData(
+        video=train_video,
+        smpl_parms=train_smpl_parms,
+        cam_parms=train_cam_parms,
+        width=width,
+        height=height,
+    )
+    
+    batch_test = VideoData(
+        video=test_video,
+        smpl_parms=test_smpl_parms,
+        cam_parms=test_cam_parms,
+        width=width,
+        height=height,
+    )
+    
+    return (batch_train, batch_test)
+
 def collate_fn_zjumocap(batch):
     """
-    Collate function for video data.
+    Collate function for zjumocap dataset.
     """
     batch_train = [item['train'] for item in batch]
     batch_test = [item['test'] for item in batch]

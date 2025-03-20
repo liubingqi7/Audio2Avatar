@@ -13,6 +13,9 @@ from models.core.DGCNN import DGCNN, ShallowEdgeConv
 from pytorch3d.transforms import quaternion_multiply
 from models.utils.lbs_utils import compute_normalized_lbs
 
+from torch_geometric.nn import MessagePassing, GCNConv
+from torch_geometric.utils import add_self_loops, degree
+
 
 # From PyTorch internals
 def _ntuple(n):
@@ -616,7 +619,7 @@ class GaussianUpdater_2(nn.Module):
             
             for k, v in gs.items():
                 if k == 'color':
-                    gs[k] = delta_params[k]
+                    gs[k] = delta_params[k] 
                 elif k == 'rot':
                     delta_params[k] = delta_params[k] / (delta_params[k].norm(dim=-1, keepdim=True) + 1e-8)
                     gs[k] = quaternion_multiply(gs[k], delta_params[k])
@@ -746,13 +749,14 @@ class GaussianDeformer(nn.Module):
         
         # MLP for offset prediction
         self.offset_input_dim = hidden_dim + hidden_dim + hidden_dim
+        self.spatio_temporal_encoder = SpatioTemporalBlock(self.offset_input_dim, self.offset_input_dim)
         self.offset_predictor = nn.Sequential(
             nn.Linear(self.offset_input_dim, hidden_dim),
             nn.LayerNorm(hidden_dim),
             nn.LeakyReLU(0.2),
             nn.Linear(hidden_dim, self._gaussian_dim)
         )
-        
+
         # LBS weights feature encoder
         # self.lbs_encoder = nn.Sequential(
         #     nn.Linear(self._lbs_weights_dim, hidden_dim//2),  # 24 is number of joints
@@ -762,7 +766,7 @@ class GaussianDeformer(nn.Module):
         # )
         
 
-    def forward(self, gaussians, pose):
+    def forward(self, gaussians, pose, edge_index):
         """
         Forward pass of GaussianDeformer.
         
@@ -815,6 +819,9 @@ class GaussianDeformer(nn.Module):
         gaussian_feats = self.feat_encoder(gaussian_feats)
 
         input_feats = torch.cat([pose_emb, gaussian_emb, gaussian_feats], dim=-1)
+
+        if 1:
+            input_feats = self.spatio_temporal_encoder(input_feats.reshape(B, T, N, -1), edge_index)
 
         # deform gaussians
         offset_pred = self.offset_predictor(input_feats)
@@ -902,3 +909,38 @@ class EncoderLayer(nn.Module):
         ff_output = self.feed_forward(x)
         x = self.norm2(x + self.dropout(ff_output))
         return x
+    
+
+class SpatioTemporalBlock(nn.Module):
+    def __init__(self, input_dim, hidden_dim, num_layers=4, dropout=0.1):
+        super(SpatioTemporalBlock, self).__init__()
+        self.input_dim = input_dim
+        self.hidden_dim = hidden_dim
+        self.num_layers = num_layers
+
+        self.gru_layers = nn.ModuleList()
+        self.gcn_layers = nn.ModuleList()
+
+        for _ in range(num_layers):
+            self.gru_layers.append(nn.GRU(input_dim, hidden_dim, batch_first=True, num_layers=1))
+            self.gcn_layers.append(GCNConv(hidden_dim, hidden_dim))
+        
+    def forward(self, x, edge_index):
+        """
+        Input:
+            x: tensor of shape [batch_size, seq_length, num_nodes, feature_dim]
+            edge_index: tensor of shape [2, num_edges]
+        """
+        
+        B, T, N, D = x.shape
+        x = x.permute(0, 2, 1, 3).reshape(B*N, T, D)
+
+        for i in range(self.num_layers):
+            x, _ = self.gru_layers[i](x)
+            x = x.reshape(B, N, T, D).permute(0, 2, 1, 3).reshape(B*T, N, D)
+            x = self.gcn_layers[i](x, edge_index)
+            x = x.reshape(B, T, N, D).permute(0, 2, 1, 3).reshape(B*N, T, D)
+
+        x = x.reshape(B, N, T, D).permute(0, 2, 1, 3)
+        return x
+

@@ -11,7 +11,7 @@ from torch.utils.data import DataLoader, RandomSampler
 from datasets.dataset_video import VideoDataset
 from datasets.dataset_thuman import BaseDataset
 from datasets.dataset_zjumocap import ZJUMocapDataset
-from utils.data_utils import collate_fn, collate_fn_zjumocap
+from utils.data_utils import collate_fn, collate_fn_zjumocap, collate_fn_thuman
 from lightning.pytorch.callbacks import ModelCheckpoint
 
 seed_everything(42, workers=True)
@@ -87,9 +87,9 @@ def main():
             scene_list=["/home/liubingqi/work/liubingqi/thuman2.0/train.json"],
             use_smplx=True,
             smpl_dir="/home/liubingqi/work/liubingqi/THuman/THuman2.0_smpl",
-            n_input_frames=args.n_input_frames-1,
+            n_input_frames=args.n_input_frames,
         )
-        collate_function = collate_fn
+        collate_function = collate_fn_thuman
         sampler = None
     elif args.dataset == "zjumocap":
         dataset = ZJUMocapDataset(

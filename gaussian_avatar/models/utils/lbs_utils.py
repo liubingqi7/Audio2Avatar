@@ -126,6 +126,7 @@ def get_edges_from_faces(faces):
     Returns:
         torch.Tensor: edge_index of shape (2, num_edges).
     """
+    print(f"faces.shape: {faces.shape}")
     # Ensure input is a NumPy array
     if isinstance(faces, list):
         faces = np.array(faces, dtype=np.int64)
@@ -146,6 +147,39 @@ def get_edges_from_faces(faces):
     edges = np.unique(edges, axis=0)  # Remove duplicates    
 
     return edges.T.astype(np.int64)
+
+def get_edges_from_faces_torch(faces):
+    """
+    Extract edges (as edge_index) from SMPL faces using PyTorch.
+    
+    Args:
+        faces (list or torch.Tensor): Triangular face indices of shape (F, 3),
+                                    where F is the number of faces.
+    
+    Returns:
+        torch.Tensor: edge_index of shape (2, num_edges).
+    """
+    print(f"faces.shape: {faces.shape}")
+    # Ensure input is a PyTorch tensor
+    if isinstance(faces, list):
+        faces = torch.tensor(faces, dtype=torch.int64)
+    elif not isinstance(faces, torch.Tensor):
+        raise TypeError("Input faces must be a list or torch.Tensor")
+
+    # Extract edges from triangular faces
+    edges = torch.cat([
+        faces[:, [0, 1]],  # Edge 1: (v0, v1)
+        faces[:, [1, 2]],  # Edge 2: (v1, v2)
+        faces[:, [2, 0]]   # Edge 3: (v2, v0)
+    ], dim=0)  # Shape: (3 * F, 2)
+
+    # Sort edges to ensure undirected edges are consistent
+    edges, _ = torch.sort(edges, dim=1)  # Sort each edge: smallest index first
+
+    # Remove duplicate edges
+    edges = torch.unique(edges, dim=0)  # Remove duplicates
+
+    return edges.t().to(torch.int64)
 
 # def lbs_transform(gaussians, smpl_params, index=0):
 #     body_pose = smpl_params['body_pose'][:, index]

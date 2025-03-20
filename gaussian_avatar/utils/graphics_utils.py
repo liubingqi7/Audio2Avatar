@@ -124,27 +124,40 @@ def getProjectionMatrix(znear, zfar, fovX, fovY):
     P[2, 3] = -(zfar * znear) / (zfar - znear)
     return P
 
-def getProjectionMatrix_torch(znear, zfar, fovX, fovY):
-    tanHalfFovY = math.tan((fovY / 2))
-    tanHalfFovX = math.tan((fovX / 2))
+def getProjectionMatrix_torch(znear, zfar, fovX, fovY, K, w, h):
+    # tanHalfFovY = math.tan((fovY / 2))
+    # tanHalfFovX = math.tan((fovX / 2))
 
-    top = tanHalfFovY * znear
-    bottom = -top
-    right = tanHalfFovX * znear
-    left = -right
+    # top = tanHalfFovY * znear
+    # bottom = -top
+    # right = tanHalfFovX * znear
+    # left = -right
 
-    P = torch.zeros(4, 4).to(fovX.device)
+    # P = torch.zeros(4, 4).to(fovX.device)
 
-    z_sign = 1.0
+    # z_sign = 1.0
 
-    P[0, 0] = 2.0 * znear / (right - left)
-    P[1, 1] = 2.0 * znear / (top - bottom)
-    P[0, 2] = (right + left) / (right - left)
-    P[1, 2] = (top + bottom) / (top - bottom)
-    P[3, 2] = z_sign
-    P[2, 2] = z_sign * zfar / (zfar - znear)
-    P[2, 3] = -(zfar * znear) / (zfar - znear)
-    return P
+    # P[0, 0] = 2.0 * znear / (right - left)
+    # P[1, 1] = 2.0 * znear / (top - bottom)
+    # P[0, 2] = (right + left) / (right - left)
+    # P[1, 2] = (top + bottom) / (top - bottom)
+    # P[3, 2] = z_sign
+    # P[2, 2] = z_sign * zfar / (zfar - znear)
+    # P[2, 3] = -(zfar * znear) / (zfar - znear)
+
+    focalx, focaly = K[0, 0].item(), K[1, 1].item()
+    px, py = K[0, 2].item(), K[1, 2].item()
+    tanfovx = math.tan(fovX * 0.5)
+    tanfovy = math.tan(fovY * 0.5)
+
+    K_ndc = torch.tensor([
+        [2 * focalx / w, 0, (2 * px - w) / w, 0],
+        [0, 2 * focaly / h, (2 * py - h) / h, 0],
+        [0, 0, zfar / (zfar - znear), -zfar * znear / (zfar - znear)],
+        [0, 0, 1, 0]
+    ]).float().to(K.device)
+
+    return K_ndc
 
 def fov2focal(fov, pixels):
     return pixels / (2 * math.tan(fov / 2))

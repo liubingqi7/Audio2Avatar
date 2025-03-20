@@ -4,7 +4,7 @@ from smplx import SMPL
 import torch
 from torch.nn import functional as F
 from pytorch3d.transforms import quaternion_to_matrix, matrix_to_quaternion
-from models.utils.lbs_utils import batch_rodrigues, batch_rigid_transform, get_edges_from_faces
+from models.utils.lbs_utils import batch_rodrigues, batch_rigid_transform, get_edges_from_faces_torch
 from utils.graphics_utils import project_gaussians, project_xyz
 from models.utils.model_utils import sample_multi_scale_feature
 from gaussian_renderer import render_batch
@@ -15,6 +15,7 @@ from models.utils.subdivide_smpl import subdivide_smpl_model
 import nvdiffrast.torch
 import cv2
 import copy
+import time
 
 
 from utils.graphics_utils import clip_T_world
@@ -64,6 +65,7 @@ class GaussianNet(nn.Module):
         self.num_iters = args.num_iters
 
     def forward(self, x, is_train=True):
+        start_time = time.time()
         rgb_images = x.video.to(self.args.device)
 
         smpl_params = x.smpl_parms
@@ -76,15 +78,21 @@ class GaussianNet(nn.Module):
 
         B, T, H, W, _ = rgb_images.shape
 
+        feats_start_time = time.time()
         feats = self.encoder(rgb_images.reshape(B*T, H, W, 3).permute(0, 3, 1, 2)) # [B*T, 3, H, W] + [B*T, C, H//2, W//2] + [B*T, C, H//4, W//4] + [B*T, C, H//8, W//8]
+        # print(f"特征提取用时: {time.time() - feats_start_time:.4f}秒")
 
+        init_start_time = time.time()
         curr_gaussians = self.init_gaussians(smpl_params)
+        # print(f"初始化高斯用时: {time.time() - init_start_time:.4f}秒")
 
         if is_train:
             all_gaussians = []
 
         for i in range(self.args.num_iters):
+            update_start_time = time.time()
             curr_gaussians = self.update_gaussians(curr_gaussians, feats, smpl_params, cam_params, rgb_images, debug=False)
+            # print(f"第{i+1}次更新高斯用时: {time.time() - update_start_time:.4f}秒")
 
             # save gaussians while training
             tmp_gs = {}
@@ -97,6 +105,7 @@ class GaussianNet(nn.Module):
             if is_train:
                 all_gaussians.append(tmp_gs)
 
+        # print(f"总用时: {time.time() - start_time:.4f}秒")
         if is_train:
             return curr_gaussians, all_gaussians
         else:
@@ -139,21 +148,32 @@ class GaussianNet(nn.Module):
         # Transform, Project, Sample, Update
         B, T, H, W, _ = rgb_images.shape
         B, N_pose, _ = smpl_params['body_pose'].shape
+
+        import time
+        
+        lbs_start_time = time.time()
         # Transform initialized gaussians using LBS
         transformed_xyz, transformed_rot = self.lbs_transform(gaussians, smpl_params)
+        # print(f"LBS变换用时: {time.time() - lbs_start_time:.4f}秒")
 
+        proj_start_time = time.time()
         # project transformed gaussians to image plane
         projected_gaussians_uv = project_xyz(transformed_xyz.reshape(-1, self.num_gaussians, 3), cam_params['intrinsic'].reshape(-1, 3, 3), cam_params['extrinsic'].reshape(-1, 4, 4)).reshape(B, N_pose, -1, 2)
+        # print(f"投影用时: {time.time() - proj_start_time:.4f}秒")
         # print(f"projected_gaussians_uv shape: {projected_gaussians_uv.shape}")
 
         if debug:
-            # draw projected gaussians
-            draw_gaussians(projected_gaussians_uv, rgb_images, label='before_update')
+            # 绘制投影的高斯点
+            import time
+            unique_label = f'before_update_{int(time.time() * 1000)}'
+            draw_gaussians(projected_gaussians_uv, rgb_images, label=unique_label)
 
+        sample_start_time = time.time()
         # sample features according to projected_gaussians_uv
         projected_gaussians_uv[..., 0] = projected_gaussians_uv[..., 0]/ W * 2 - 1.0
         projected_gaussians_uv[..., 1] = projected_gaussians_uv[..., 1]/ H * 2 - 1.0
         sampled_features = sample_multi_scale_feature(feats, projected_gaussians_uv.reshape(B*T, self.num_gaussians, 2)).reshape(B, T, self.num_gaussians, -1)
+        # print(f"特征采样用时: {time.time() - sample_start_time:.4f}秒")
         # print(f"sampled_features shape: {sampled_features.shape}")
 
         sampled_features = sampled_features.permute(0, 2, 1, 3).reshape(B*self.num_gaussians, T, -1)
@@ -166,11 +186,15 @@ class GaussianNet(nn.Module):
         #     soft_mask = visibility_map.float() * 1.0 + (1 - visibility_map.float()) * epsilon
         #     sampled_features = sampled_features * soft_mask.unsqueeze(-1)
 
+        attn_start_time = time.time()
         # cross-view attention
         sampled_features = self.cross_view_attn(sampled_features, sampled_features, sampled_features)
+        # print(f"注意力计算用时: {time.time() - attn_start_time:.4f}秒")
         sampled_features = sampled_features.reshape(B, self.num_gaussians, T, -1).reshape(B, self.num_gaussians, -1)
 
+        update_start_time = time.time()
         updated_gaussians = self.gaussian_updater(gaussians, sampled_features)
+        # print(f"高斯更新用时: {time.time() - update_start_time:.4f}秒")
 
         if debug:
             #lbs transform
@@ -178,8 +202,8 @@ class GaussianNet(nn.Module):
 
             projected_gaussians_uv = project_xyz(transformed_xyz.reshape(-1, self.num_gaussians, 3), cam_params['intrinsic'].reshape(-1, 3, 3), cam_params['extrinsic'].reshape(-1, 4, 4)).reshape(B, N_pose, -1, 2)
         
-            # draw projected gaussians
-            draw_gaussians(projected_gaussians_uv, rgb_images, label='after_update')
+            unique_label = f'after_update_{int(time.time() * 1000)}'
+            draw_gaussians(projected_gaussians_uv, rgb_images, label=unique_label)
 
         return updated_gaussians
 
@@ -301,7 +325,8 @@ class AnimationNet(nn.Module):
         self.J_regressor = self.smpl_model.J_regressor # [24, 6890]
         self.v_template = self.smpl_model.v_template # [6890, 3]
         self.joints = torch.einsum('bik,ji->bjk', [self.v_template.unsqueeze(0), self.J_regressor]) # [1, 24, 3]
-        # self.edges = torch.tensor(get_edges_from_faces(self.smpl_model.faces)).to(self.args.device) # [2, 20664]
+        self.edges = torch.tensor(get_edges_from_faces_torch(self.smpl_model.faces)).to(self.args.device) # [2, 20664]
+        print(f"self.edges.shape: {self.edges.shape}")
         
         # self.lbs_weights = self.smpl_model.lbs_weights # [N, 24]
         # self.parents = self.smpl_model.parents # [24]
@@ -314,6 +339,7 @@ class AnimationNet(nn.Module):
             self.deforme_none = simple_stack
 
     def forward(self, gaussians, poses, cam_params, is_train=True):
+        start_time = time.time()
         B, N_gaussians, _ = gaussians['xyz'].shape
         B, N_poses, _ = poses['body_pose'].shape
 
@@ -324,26 +350,33 @@ class AnimationNet(nn.Module):
 
         # if not deform, just use lbs
         if not self.args.deform:
+            lbs_start_time = time.time()
             # LBS 
             transformed_gaussians = self.lbs_transform(gaussians, poses) #B -> B*N_poses
+            # print(f"LBS变换用时: {time.time() - lbs_start_time:.4f}秒")
 
             # project transformed gaussians to image plane
-            # projected_gaussians_uv = project_xyz(transformed_gaussians['xyz'].reshape(-1, N_gaussians, 3), cam_params['intrinsic'].reshape(-1, 3, 3), cam_params['extrinsic'].reshape(-1, 4, 4)).reshape(B, N_poses, -1, 2)
+            projected_gaussians_uv = project_xyz(transformed_gaussians['xyz'].reshape(-1, N_gaussians, 3), cam_params['intrinsic'].reshape(-1, 3, 3), cam_params['extrinsic'].reshape(-1, 4, 4)).reshape(B, N_poses, -1, 2)
             # print(f"projected_gaussians_uv shape: {projected_gaussians_uv.shape}")
 
-            # if 1:
-            #     # draw projected gaussians
-            #     # 创建一个纯黑的背景图像作为画布
-            #     black_canvas = torch.zeros((B, N_poses, 1024, 1024, 3), device=self.args.device)
-            #     draw_gaussians(projected_gaussians_uv, black_canvas)
+            if 0:
+                # draw projected gaussians
+                # 创建一个纯黑的背景图像作为画布
+                black_canvas = torch.zeros((B, N_poses, 1024, 1024, 3), device=self.args.device)
+                draw_gaussians(projected_gaussians_uv, black_canvas, label='projected_gaussian_center')
         else:
+            deform_start_time = time.time()
             # First calculate the transformation matrix T and transform the gaussians
             transformed_gaussians = self.lbs_transform(gaussians, poses)
-            transformed_gaussians = self.deformer(transformed_gaussians, poses)
+            transformed_gaussians = self.deformer(transformed_gaussians, poses, self.edges)
+            # print(f"变形用时: {time.time() - deform_start_time:.4f}秒")
         
+        render_start_time = time.time()
         # Render gaussians
-        image = render_batch(transformed_gaussians, cam_params['intrinsic'], cam_params['extrinsic'], self.args)
+        image = render_batch(transformed_gaussians, cam_params['intrinsic'], cam_params['extrinsic'], self.args, debug=False)
+        # print(f"渲染用时: {time.time() - render_start_time:.4f}秒")
         
+        # print(f"总用时: {time.time() - start_time:.4f}秒")
         return image
     
     def get_transformation_matrix(self, gaussians, poses):
@@ -546,7 +579,7 @@ def draw_gaussians(projected_gaussians, rgb_images, label='projected'):
         
         # 在这些点的位置画白色点
         if valid_points.shape[0] > 0:
-            img[valid_points[:, 1], valid_points[:, 0]] = torch.tensor([1.0, 1.0, 1.0], device=rgb_images.device)
+            img[valid_points[:, 1], valid_points[:, 0]] = torch.tensor([0.0, 0.0, 1.0], device=rgb_images.device)
         
         # 保存图像
         import torchvision
