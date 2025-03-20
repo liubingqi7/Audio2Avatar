@@ -42,7 +42,7 @@ python train_lightning.py --num_epochs 50 --rgb \
     --dataset zjumocap \
     --use_wandb \
     --n_test_frames 1 \
-    --deform \
+    # --deform \
     # --use_ckpt \
     # --ckpt_path /home/liubingqi/work/Audio2Avatar/gaussian_avatar/results_315_iter2_fix/checkpoints/epoch=39-train_loss=0.00.ckpt \
     # --n_test_frames 1 \

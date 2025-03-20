@@ -55,6 +55,32 @@ def render_batch(gaussians, K, E, args, bg_color=None, debug=False):
     return torch.stack(rendered_images).reshape(B, T, args.image_height, args.image_width, 3)
 
 
+# def render_one_batch(xyzs, rots, scales, opacities, colors, K, E, args, bg_color=None, debug=False):
+#     '''
+#     Batch rendering for gaussian avatar
+#     '''
+#     B, T = E.shape[0], E.shape[1]
+    
+#     R = E[:, :3, :3].reshape(3, 3).transpose(1, 2)
+#     T = E[:, :3, 3]
+    
+#     znear = 0.01
+#     zfar = 100.0
+
+#     height = args.image_height
+#     width = args.image_width
+
+#     focal_length_y = K[:, 1, 1]
+#     focal_length_x = K[:, 0, 0]
+    
+#     FovY = focal2fov_torch(focal_length_y, height)
+#     FovX = focal2fov_torch(focal_length_x, width)
+
+#     tanfovx = math.tan(FovX * 0.5)
+#     tanfovy = math.tan(FovY * 0.5)
+
+
+
 def render_one(xyzs, rots, scales, opacities, colors, K, E, args, bg_color=None, debug=False):
     '''
     Customized render for gaussian avatar
