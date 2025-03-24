@@ -71,6 +71,8 @@ def setup_parser():
     parser.add_argument('--dataset', type=str, default='zjumocap', help='Dataset to use for training the gaussian net.')
     parser.add_argument('--n_input_frames', type=int, default=4, help='Number of input frames for training the gaussian net.')
     parser.add_argument('--n_test_frames', type=int, default=4, help='Number of test frames for training the gaussian net.')
+    parser.add_argument('--mutiview', action='store_true', help='Whether to use mutiview training.')
+    parser.add_argument('--multi_pose', action='store_true', help='Whether to use multi-pose training.')
     
     args = parser.parse_args()
 
@@ -97,6 +99,7 @@ def main():
             smpl_path='/home/liubingqi/work/liubingqi/SMPL_SMPLX/SMPL_models/smpl/SMPL_NEUTRAL.pkl',
             n_input_frames=args.n_input_frames,
             n_test_frames=args.n_test_frames,
+            args=args
         )
         collate_function = collate_fn_zjumocap
         sampler = RandomSampler(dataset, replacement=True, num_samples=1000)
@@ -135,6 +138,10 @@ def main():
                                           if k.startswith('gaussian_net.')}
                 model.gaussian_net.load_state_dict(gaussian_net_state_dict)
                 print("Successfully loaded GaussianNet weights")
+                animation_net_state_dict = {k.replace('animation_net.', ''): v for k, v in checkpoint['state_dict'].items() 
+                                          if k.startswith('animation_net.')}
+                model.animation_net.load_state_dict(animation_net_state_dict)
+                print("Successfully loaded AnimationNet weights")
             else:
                 # Directly load model weights
                 model.gaussian_net.load_state_dict(checkpoint)

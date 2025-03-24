@@ -1,4 +1,4 @@
-export CUDA_VISIBLE_DEVICES=2
+export CUDA_VISIBLE_DEVICES=3
 # python train_pipe.py --num_epochs 101 --rgb \
 #     --clip_length 4 \
 #     --smplx_model_path /home/liubingqi/work/liubingqi/SMPL_SMPLX/SMPL_models/smpl/SMPL_NEUTRAL.pkl \
@@ -33,16 +33,17 @@ export CUDA_VISIBLE_DEVICES=2
 python train_lightning.py --num_epochs 50 --rgb \
     --clip_length 4 \
     --smplx_model_path /home/liubingqi/work/liubingqi/SMPL_SMPLX/SMPL_models/smpl/SMPL_NEUTRAL.pkl \
-    --output_dir results_320_test_spatio_temporal \
+    --output_dir results_324_spatio_temporal_zjumocap_multi_pose \
     --image_height 1024 \
     --image_width 1024 \
-    --experiment_name 320_test_spatio_temporal \
+    --experiment_name 324_spatio_temporal_zjumocap_multi_pose \
     --num_iters 2 \
     --batch_size 1 \
     --dataset zjumocap \
     --use_wandb \
-    --n_test_frames 1 \
+    --n_test_frames 2 \
     # --deform \
+    # --multi_pose \
     # --use_ckpt \
-    # --ckpt_path /home/liubingqi/work/Audio2Avatar/gaussian_avatar/results_315_iter2_fix/checkpoints/epoch=39-train_loss=0.00.ckpt \
+    # --ckpt_path /home/liubingqi/work/Audio2Avatar/gaussian_avatar/results_320_spatio_temporal_zjumocap/checkpoints/epoch=153-train_loss=0.00.ckpt\
     # --n_test_frames 1 \

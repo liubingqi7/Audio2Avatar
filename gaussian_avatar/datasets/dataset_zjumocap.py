@@ -33,7 +33,7 @@ precomputed_pelvis_joints = {
 }
 
 class ZJUMocapDataset(Dataset):
-    def __init__(self, dataset_root, transform=None, n_input_frames=5, n_test_frames=1, smpl_path=None):
+    def __init__(self, dataset_root, transform=None, n_input_frames=5, n_test_frames=1, smpl_path=None, args=None):
         """
         Args:
             dataset_root (str): Root directory of the dataset
@@ -46,6 +46,7 @@ class ZJUMocapDataset(Dataset):
         self.n_test_frames = n_test_frames
         self.index = self.build_index()
         self.smpl_path = smpl_path
+        self.args = args
 
     def build_index(self):
         """
@@ -88,14 +89,7 @@ class ZJUMocapDataset(Dataset):
 
     def get_frame_data(self, scene, camera_ids, frame_ids):
         """
-        获取多个相机和多个帧的数据
-        
-        参数:
-            scene: 场景名称
-            camera_ids: 可以是单个相机ID或多个相机ID的列表/数组
-            frame_ids: 可以是单个帧ID或多个帧ID的列表/数组
         """
-        # 确保camera_ids和frame_ids是可迭代对象
         if not isinstance(camera_ids, (list, np.ndarray)):
             camera_ids = [camera_ids]
         if not isinstance(frame_ids, (list, np.ndarray)):
@@ -107,7 +101,6 @@ class ZJUMocapDataset(Dataset):
         extrinsics = []
         smpls = []
         
-        # 遍历所有相机和帧的组合
         for camera_id in camera_ids:
             camera_str = f"{camera_id:03d}"
             for frame_id in frame_ids:
@@ -125,13 +118,11 @@ class ZJUMocapDataset(Dataset):
                 extrinsics.append(self.load_extrinsic(item))
                 smpls.append(self.load_smpl(item))
         
-        # 将所有数据堆叠成批次
         rgbs = np.stack(rgbs)
         masks = np.stack(masks)
         intrinsics = np.stack(intrinsics)
         extrinsics = np.stack(extrinsics)
         
-        # 合并SMPL参数
         smpl_all = {}
         for smpl in smpls:
             for key in smpl.keys():
@@ -140,11 +131,13 @@ class ZJUMocapDataset(Dataset):
                 else:
                     smpl_all[key] = np.concatenate([smpl_all[key], smpl[key]], axis=0)
         
-        # 处理背景
-        masks = masks[..., None] * 255.0
+        # masks = masks[..., None] * 255.0
+        # rgbs = rgbs * masks + (1 - masks) * np.array([255, 255, 255])
+
+        masks = (masks > 0).astype(np.float32)
+        masks = masks[..., None]
         rgbs = rgbs * masks + (1 - masks) * np.array([255, 255, 255])
         
-        # 转换为张量
         rgbs = torch.from_numpy(rgbs.astype(np.float32) / 255.0)
         masks = torch.from_numpy(masks[..., 0].astype(np.float32))
         intrinsics = torch.from_numpy(intrinsics.astype(np.float32))
@@ -190,22 +183,32 @@ class ZJUMocapDataset(Dataset):
         scene = scene_info['scene']
         num_cameras = scene_info['num_cameras']
         num_frames = scene_info['num_frames']
-        
-        frame_id = np.random.randint(0, num_frames)
-        
-        train_camera_ids = np.random.choice(num_cameras, size=self.n_input_frames, replace=True)
-        
-        test_camera_ids = np.random.choice(num_cameras, size=self.n_test_frames, replace=True)
-        for i in range(self.n_test_frames):
-            if test_camera_ids[i] in train_camera_ids:
-                test_camera_ids[i] = (test_camera_ids[i] + 1) % num_cameras
-        
-        # print(f"scene: {scene}")
-        # print(f"train_camera_ids: {train_camera_ids}, test_camera_ids: {test_camera_ids}")
-        # print(f"frame_id: {frame_id}")
-        
-        train_data = self.get_frame_data(scene, train_camera_ids, frame_id)
-        test_data = self.get_frame_data(scene, test_camera_ids, frame_id)
+
+        if self.args.mutiview:
+            frame_id = np.random.randint(0, num_frames)
+            
+            train_camera_ids = np.random.choice(num_cameras, size=self.n_input_frames, replace=True)
+            test_camera_ids = np.random.choice(num_cameras, size=self.n_test_frames, replace=True)
+
+
+            for i in range(self.n_test_frames):
+                if test_camera_ids[i] in train_camera_ids:
+                    test_camera_ids[i] = (test_camera_ids[i] + 1) % num_cameras
+            
+            # print(f"scene: {scene}")
+            # print(f"train_camera_ids: {train_camera_ids}, test_camera_ids: {test_camera_ids}")
+            # print(f"frame_id: {frame_id}")
+            
+            train_data = self.get_frame_data(scene, train_camera_ids, frame_id)
+            test_data = self.get_frame_data(scene, test_camera_ids, frame_id)
+        elif self.args.multi_pose:
+            camera_id = np.random.randint(0, num_cameras)
+
+            train_frame_ids = np.random.choice(num_frames, size=self.n_input_frames, replace=True)
+            test_frame_ids = np.random.choice(num_frames, size=self.n_test_frames, replace=True)
+
+            train_data = self.get_frame_data(scene, camera_id, train_frame_ids)
+            test_data = self.get_frame_data(scene, camera_id, test_frame_ids)
         
         return {
             'train': train_data,
@@ -221,7 +224,7 @@ class ZJUMocapDataset(Dataset):
 
     def load_mask(self, item):
         scene_path = os.path.join(self.dataset_root, item['scene'])
-        mask_path = os.path.join(scene_path, 'mask', item['frame'], f"{item['camera']}_{item['frame']}.png")
+        mask_path = os.path.join(scene_path, 'nb_another_mask', item['frame'], f"{item['camera']}_{item['frame']}.png")
         mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
         mask = mask.astype(np.float32) / 255.0
         return mask
@@ -278,7 +281,7 @@ class ZJUMocapDataset(Dataset):
 
         smpl_np['beta'] = smpl_np['shapes'].reshape(-1, 10)
         
-        # del smpl_np['Rh']
+        del smpl_np['R']
         # del smpl_np['Th']
         return smpl_np
 

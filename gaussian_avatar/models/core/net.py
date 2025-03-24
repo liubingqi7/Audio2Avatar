@@ -115,6 +115,7 @@ class GaussianNet(nn.Module):
         B, N_pose, _ = smpl_params['body_pose'].shape
         blend_shape = torch.einsum('bl,mkl->bmk', [smpl_params['beta'][:, 0], self.shapedirs])
         v_shaped = self.v_template + blend_shape
+        self.v_shaped = v_shaped
         
         # regress J from v_shaped
         joints = torch.einsum('bik,ji->bjk', [v_shaped, self.J_regressor]) # [B, 24, 3]
@@ -326,7 +327,6 @@ class AnimationNet(nn.Module):
         self.v_template = self.smpl_model.v_template # [6890, 3]
         self.joints = torch.einsum('bik,ji->bjk', [self.v_template.unsqueeze(0), self.J_regressor]) # [1, 24, 3]
         self.edges = torch.tensor(get_edges_from_faces_torch(self.smpl_model.faces)).to(self.args.device) # [2, 20664]
-        print(f"self.edges.shape: {self.edges.shape}")
         
         # self.lbs_weights = self.smpl_model.lbs_weights # [N, 24]
         # self.parents = self.smpl_model.parents # [24]
@@ -337,6 +337,8 @@ class AnimationNet(nn.Module):
             self.deformer = GaussianDeformer(self.args)
         else:
             self.deforme_none = simple_stack
+
+        
 
     def forward(self, gaussians, poses, cam_params, is_train=True):
         start_time = time.time()
@@ -377,7 +379,7 @@ class AnimationNet(nn.Module):
         # print(f"渲染用时: {time.time() - render_start_time:.4f}秒")
         
         # print(f"总用时: {time.time() - start_time:.4f}秒")
-        return image
+        return image, transformed_gaussians
     
     def get_transformation_matrix(self, gaussians, poses):
         '''

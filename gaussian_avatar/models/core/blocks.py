@@ -749,7 +749,7 @@ class GaussianDeformer(nn.Module):
         
         # MLP for offset prediction
         self.offset_input_dim = hidden_dim + hidden_dim + hidden_dim
-        self.spatio_temporal_encoder = SpatioTemporalBlock(self.offset_input_dim, self.offset_input_dim)
+        self.spatio_temporal_encoder = SpatioTemporalBlock(self.offset_input_dim, self.offset_input_dim, num_layers=2)
         self.offset_predictor = nn.Sequential(
             nn.Linear(self.offset_input_dim, hidden_dim),
             nn.LayerNorm(hidden_dim),
